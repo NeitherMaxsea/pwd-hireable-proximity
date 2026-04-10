@@ -6,7 +6,17 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  activeOfferActionId: {
+    type: String,
+    default: '',
+  },
+  activeOfferAction: {
+    type: String,
+    default: '',
+  },
 })
+
+const emit = defineEmits(['accept-offer', 'reject-offer'])
 
 const totalOffers = computed(() => props.offerRecords.length)
 const hiredOffers = computed(() =>
@@ -17,6 +27,11 @@ const acceptedOffers = computed(() =>
 )
 
 const getCompanyInitial = (value) => String(value || 'J').trim().charAt(0).toUpperCase() || 'J'
+const getOfferActionTargetId = (record = {}) => String(record?.offerId || record?.id || '').trim()
+const isOfferBusy = (record = {}) =>
+  getOfferActionTargetId(record) !== '' && getOfferActionTargetId(record) === String(props.activeOfferActionId || '').trim()
+const isOfferActionPending = (record = {}, action = '') =>
+  isOfferBusy(record) && String(props.activeOfferAction || '').trim().toLowerCase() === String(action || '').trim().toLowerCase()
 </script>
 
 <template>
@@ -25,8 +40,8 @@ const getCompanyInitial = (value) => String(value || 'J').trim().charAt(0).toUpp
       <header class="applicant-job-offers-page__hero">
         <div class="applicant-job-offers-page__hero-copy">
           <p class="applicant-job-offers-page__eyebrow">Job Offers</p>
-          <h2>Final offers and hiring results</h2>
-          <p>Review finalized offers and live hiring decisions from employers in one place.</p>
+          <h2>Live offers and applicant decisions</h2>
+          <p>Review each offer letter here, then confirm or reject it so the business owner and your timeline update in real time.</p>
         </div>
 
         <div class="applicant-job-offers-page__hero-stats" aria-label="Job offer summary">
@@ -50,6 +65,7 @@ const getCompanyInitial = (value) => String(value || 'J').trim().charAt(0).toUpp
           v-for="(record, index) in offerRecords"
           :key="record.id"
           class="applicant-job-offers-page__card"
+          :class="{ 'is-awaiting-response': record.canRespond }"
           :style="{ '--offer-enter-delay': `${index * 60}ms` }"
         >
           <div class="applicant-job-offers-page__card-head">
@@ -98,6 +114,52 @@ const getCompanyInitial = (value) => String(value || 'J').trim().charAt(0).toUpp
           <p class="applicant-job-offers-page__summary">
             {{ record.offerSummary }}
           </p>
+
+          <div class="applicant-job-offers-page__detail-grid">
+            <article class="applicant-job-offers-page__detail-item">
+              <span>Compensation</span>
+              <strong>{{ record.compensationLabel }}</strong>
+            </article>
+            <article class="applicant-job-offers-page__detail-item">
+              <span>Start Date</span>
+              <strong>{{ record.startDateLabel }}</strong>
+            </article>
+            <article class="applicant-job-offers-page__detail-item">
+              <span>Response Deadline</span>
+              <strong>{{ record.responseDeadlineLabel }}</strong>
+            </article>
+          </div>
+
+          <div v-if="record.offerLetter" class="applicant-job-offers-page__letter">
+            <span class="applicant-job-offers-page__letter-label">Offer Letter</span>
+            <p>{{ record.offerLetter }}</p>
+          </div>
+
+          <div v-if="record.canRespond" class="applicant-job-offers-page__actions">
+            <button
+              type="button"
+              class="applicant-job-offers-page__action applicant-job-offers-page__action--ghost"
+              :disabled="isOfferBusy(record)"
+              @click="emit('reject-offer', record)"
+            >
+              <span v-if="isOfferActionPending(record, 'rejected')">Rejecting...</span>
+              <span v-else>Reject Offer</span>
+            </button>
+            <button
+              type="button"
+              class="applicant-job-offers-page__action applicant-job-offers-page__action--primary"
+              :disabled="isOfferBusy(record)"
+              @click="emit('accept-offer', record)"
+            >
+              <span v-if="isOfferActionPending(record, 'accepted')">Confirming...</span>
+              <span v-else>Confirm Offer</span>
+            </button>
+          </div>
+
+          <div v-else-if="record.respondedAtLabel || record.responseNote" class="applicant-job-offers-page__response-note">
+            <strong v-if="record.respondedAtLabel">Response saved {{ record.respondedAtLabel }}</strong>
+            <span v-if="record.responseNote">{{ record.responseNote }}</span>
+          </div>
 
           <footer class="applicant-job-offers-page__footer">
             <span>
@@ -149,7 +211,7 @@ const getCompanyInitial = (value) => String(value || 'J').trim().charAt(0).toUpp
 .applicant-job-offers-page__hero-copy {
   display: grid;
   gap: 0.45rem;
-  max-width: 36rem;
+  max-width: 38rem;
 }
 
 .applicant-job-offers-page__eyebrow {
@@ -217,6 +279,11 @@ const getCompanyInitial = (value) => String(value || 'J').trim().charAt(0).toUpp
   background: rgba(255, 255, 255, 0.96);
   animation: applicant-job-offers-page-enter 0.28s ease both;
   animation-delay: var(--offer-enter-delay, 0ms);
+}
+
+.applicant-job-offers-page__card.is-awaiting-response {
+  border-color: rgba(245, 158, 11, 0.24);
+  box-shadow: 0 14px 28px rgba(180, 83, 9, 0.08);
 }
 
 .applicant-job-offers-page__card-head {
@@ -293,6 +360,18 @@ const getCompanyInitial = (value) => String(value || 'J').trim().charAt(0).toUpp
   color: #176a42;
 }
 
+.applicant-job-offers-page__status-pill.is-warning {
+  border-color: rgba(245, 158, 11, 0.2);
+  background: rgba(255, 247, 237, 0.96);
+  color: #b45309;
+}
+
+.applicant-job-offers-page__status-pill.is-danger {
+  border-color: rgba(239, 68, 68, 0.22);
+  background: rgba(254, 242, 242, 0.96);
+  color: #b91c1c;
+}
+
 .applicant-job-offers-page__meta {
   display: flex;
   flex-wrap: wrap;
@@ -312,6 +391,109 @@ const getCompanyInitial = (value) => String(value || 'J').trim().charAt(0).toUpp
   color: #234432;
   font-size: 0.94rem;
   line-height: 1.65;
+}
+
+.applicant-job-offers-page__detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.applicant-job-offers-page__detail-item {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid rgba(66, 112, 87, 0.12);
+  background: rgba(247, 251, 248, 0.92);
+}
+
+.applicant-job-offers-page__detail-item span,
+.applicant-job-offers-page__letter-label {
+  color: #6a8678;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.applicant-job-offers-page__detail-item strong {
+  color: #173927;
+  font-size: 0.94rem;
+  line-height: 1.45;
+}
+
+.applicant-job-offers-page__letter {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.95rem 1rem;
+  border: 1px solid rgba(66, 112, 87, 0.12);
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.applicant-job-offers-page__letter p {
+  margin: 0;
+  color: #234432;
+  font-size: 0.93rem;
+  line-height: 1.7;
+  white-space: pre-line;
+}
+
+.applicant-job-offers-page__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+}
+
+.applicant-job-offers-page__action {
+  min-width: 10rem;
+  min-height: 2.9rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid transparent;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.18s ease, background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.applicant-job-offers-page__action:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.applicant-job-offers-page__action:disabled {
+  cursor: wait;
+  opacity: 0.72;
+  transform: none;
+}
+
+.applicant-job-offers-page__action--ghost {
+  border-color: rgba(220, 38, 38, 0.2);
+  background: rgba(254, 242, 242, 0.96);
+  color: #b91c1c;
+}
+
+.applicant-job-offers-page__action--primary {
+  border-color: rgba(22, 163, 74, 0.22);
+  background: linear-gradient(135deg, #1f8f59, #166534);
+  color: #ffffff;
+}
+
+.applicant-job-offers-page__response-note {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid rgba(66, 112, 87, 0.12);
+  background: rgba(247, 251, 248, 0.94);
+}
+
+.applicant-job-offers-page__response-note strong {
+  color: #173927;
+  font-size: 0.88rem;
+}
+
+.applicant-job-offers-page__response-note span {
+  color: #5d7a6b;
+  font-size: 0.84rem;
+  line-height: 1.55;
 }
 
 .applicant-job-offers-page__footer {
@@ -383,16 +565,19 @@ const getCompanyInitial = (value) => String(value || 'J').trim().charAt(0).toUpp
 }
 
 @media (max-width: 760px) {
-  .applicant-job-offers-page__hero-stats {
+  .applicant-job-offers-page__hero-stats,
+  .applicant-job-offers-page__detail-grid {
     grid-template-columns: 1fr;
   }
 
-  .applicant-job-offers-page__card-head {
+  .applicant-job-offers-page__card-head,
+  .applicant-job-offers-page__actions {
     flex-direction: column;
   }
 
-  .applicant-job-offers-page__status-pill {
-    white-space: normal;
+  .applicant-job-offers-page__status-pill,
+  .applicant-job-offers-page__action {
+    width: 100%;
   }
 }
 </style>

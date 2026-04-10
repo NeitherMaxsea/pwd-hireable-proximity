@@ -26,6 +26,14 @@ const props = defineProps({
     type: String,
     default: '',
   },
+  businessCategory: {
+    type: String,
+    default: '',
+  },
+  businessAvatar: {
+    type: String,
+    default: '',
+  },
   actorId: {
     type: String,
     default: '',
@@ -171,8 +179,8 @@ const authUser = ref({
 })
 const profileForm = ref({
   companyName: normalizeText(props.businessName),
-  category: '',
-  avatar: '',
+  category: normalizeText(props.businessCategory),
+  avatar: normalizeText(props.businessAvatar),
 })
 const businessCategory = computed(() => normalizeText(profileForm.value.category))
 const businessName = computed(() => normalizeText(props.businessName) || profileForm.value.companyName || 'Business Workspace')
@@ -352,8 +360,6 @@ const recruitmentBindings = computed(() => ({
   JOB_POSTING_MAX_VACANCIES,
   JOB_POSTING_DISABILITY_TYPES,
   jobPostingDisabilityLabel: recruitmentState.jobPostingDisabilityLabel.value,
-  jobPostingDisabilityTypeNeedsSpecification: recruitmentState.jobPostingDisabilityTypeNeedsSpecification.value,
-  getJobPostingImpairmentSpecificationPlaceholder: recruitmentState.getJobPostingImpairmentSpecificationPlaceholder,
   JOB_POSTING_LANGUAGE_OPTIONS,
   jobPostingLanguageLabel: recruitmentState.jobPostingLanguageLabel.value,
   handleJobPostingFieldChange: recruitmentState.handleJobPostingFieldChange,
@@ -391,6 +397,22 @@ watch(
   () => props.businessName,
   (value) => {
     profileForm.value.companyName = normalizeText(value)
+  },
+  { immediate: true },
+)
+
+watch(
+  () => props.businessCategory,
+  (value) => {
+    profileForm.value.category = normalizeText(value)
+  },
+  { immediate: true },
+)
+
+watch(
+  () => props.businessAvatar,
+  (value) => {
+    profileForm.value.avatar = normalizeText(value)
   },
   { immediate: true },
 )

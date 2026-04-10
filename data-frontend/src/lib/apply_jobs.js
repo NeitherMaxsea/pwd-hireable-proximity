@@ -132,7 +132,7 @@ const normalizeApplyJobRecord = (record = {}) => ({
   ),
   interviewSchedule: text(record.interviewSchedule || record.interview_schedule),
   interviewDate: text(record.interviewDate || record.interview_date),
-  interviewType: text(record.interviewType || record.interview_type || 'initial') || 'initial',
+  interviewType: text(record.interviewType || record.interview_type || 'interview') || 'interview',
   interviewer: text(record.interviewer),
   interviewMode: text(record.interviewMode || record.interview_mode),
   interviewLocationOrLink: text(record.interviewLocationOrLink || record.interview_location_or_link),

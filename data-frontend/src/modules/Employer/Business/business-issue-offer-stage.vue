@@ -2,6 +2,7 @@
 import { computed, reactive, ref } from 'vue'
 import BusinessIssueOfferContent from '@/modules/Employer/Business/business_IssueOffer.vue'
 import BusinessIssueOfferModal from '@/modules/Employer/Business/business_issue_offer.vue'
+import { saveBusinessJobOfferRecord } from '@/lib/job_offers'
 import '@/components/businesss.css'
 
 const props = defineProps({
@@ -78,14 +79,15 @@ const issueOfferRows = computed(() => {
       else if (rawOfferStatus === 'sent') offerStatus = 'sent'
 
       const passedStageLabel = normalizeValue(item?.status).includes('interview') ? 'Interview Completed' : 'Approved for Offer'
-      const completedAt = text(
+      const completedAt = (
         item?.interviewDecidedAt
         || item?.interviewRespondedAt
         || item?.approvedAt
         || item?.reviewedAt
         || item?.statusUpdatedAt
         || item?.updatedAt
-        || item?.appliedAt,
+        || item?.appliedAt
+        || null
       )
 
       const offerStatusLabelMap = {
@@ -103,14 +105,24 @@ const issueOfferRows = computed(() => {
 
       return {
         id: text(item?.id || item?.applicationId || `${applicantName}-${index}`),
+        applicationId: text(item?.id || item?.applicationId || item?.application_id),
+        workspaceOwnerId: text(item?.workspaceOwnerId || item?.workspace_owner_id),
+        workspaceOwnerName: text(item?.workspaceOwnerName || item?.workspace_owner_name || item?.businessName || item?.business_name),
+        workspaceOwnerEmail: text(item?.workspaceOwnerEmail || item?.workspace_owner_email),
+        applicantId: text(item?.applicantId || item?.applicant_id || item?.userId || item?.user_id),
         applicantName,
         applicantEmail: text(item?.applicantEmail || item?.applicant_email || item?.email) || 'No email',
         applicantAvatar: text(item?.applicantAvatar || item?.avatarUrl || item?.avatar),
         applicantInitials: buildInitials(applicantName),
+        jobId: text(item?.jobId || item?.job_id),
         jobTitle: text(item?.jobTitle || item?.job_title || item?.role || item?.position) || 'Open role',
         passedStageLabel,
         completedAt,
         interviewer: text(item?.interviewer || item?.reviewedByName || item?.reviewedBy) || 'Business team',
+        jobOfferId: text(item?.jobOfferId || item?.job_offer_id || item?.offerId || item?.offer_id),
+        interviewType: text(item?.jobOfferInterviewType || item?.job_offer_interview_type || item?.interviewType || item?.interview_type || 'initial') || 'initial',
+        sentAt: text(item?.jobOfferSentAt || item?.job_offer_sent_at),
+        createdAt: text(item?.jobOfferCreatedAt || item?.job_offer_created_at),
         offerTitle: text(item?.jobOfferTitle || item?.offerTitle),
         offerStatus,
         offerStatusLabel: offerStatusLabelMap[offerStatus] || 'Ready to send',
@@ -181,19 +193,50 @@ const closeIssueOfferModal = () => {
 }
 
 const submitIssueOffer = async () => {
-  if (!selectedIssueOfferCandidate.value) return
+  const candidate = selectedIssueOfferCandidate.value
+  if (!candidate) return
   if (!text(issueOfferForm.offerTitle) || !text(issueOfferForm.compensation) || !text(issueOfferForm.offerLetter)) {
     issueOfferFormError.value = 'Complete the offer title, compensation, and offer letter before sending.'
+    return
+  }
+  if (!candidate.applicationId || !candidate.workspaceOwnerId || !candidate.applicantId || !candidate.jobId) {
+    issueOfferFormError.value = 'This applicant record is still syncing. Please reopen the offer and try again.'
     return
   }
 
   issueOfferFormError.value = ''
   isIssueOfferSubmitting.value = true
 
-  await new Promise((resolve) => setTimeout(resolve, 550))
+  try {
+    await saveBusinessJobOfferRecord({
+      id: candidate.jobOfferId || candidate.applicationId,
+      applicationId: candidate.applicationId,
+      workspaceOwnerId: candidate.workspaceOwnerId,
+      workspaceOwnerName: candidate.workspaceOwnerName,
+      workspaceOwnerEmail: candidate.workspaceOwnerEmail,
+      applicantId: candidate.applicantId,
+      applicantName: candidate.applicantName,
+      applicantEmail: candidate.applicantEmail,
+      applicantAvatar: candidate.applicantAvatar,
+      jobId: candidate.jobId,
+      jobTitle: candidate.jobTitle,
+      interviewType: candidate.interviewType || 'initial',
+      offerTitle: text(issueOfferForm.offerTitle),
+      compensation: text(issueOfferForm.compensation),
+      startDate: text(issueOfferForm.startDate),
+      responseDeadline: text(issueOfferForm.responseDeadline),
+      offerLetter: text(issueOfferForm.offerLetter),
+      offerStatus: 'sent',
+      sentAt: candidate.sentAt,
+      createdAt: candidate.createdAt,
+    })
 
-  isIssueOfferSubmitting.value = false
-  closeIssueOfferModal()
+    closeIssueOfferModal()
+  } catch (error) {
+    issueOfferFormError.value = error instanceof Error ? error.message : 'Unable to send this job offer right now.'
+  } finally {
+    isIssueOfferSubmitting.value = false
+  }
 }
 </script>
 

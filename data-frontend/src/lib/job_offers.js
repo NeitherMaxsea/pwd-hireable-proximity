@@ -321,6 +321,89 @@ export const saveBusinessJobOfferRecord = async (payload = {}) => {
   }
 }
 
+const normalizeApplicantOfferResponse = (value = '') => {
+  const normalized = text(value).toLowerCase()
+  if (['accept', 'accepted', 'confirm', 'confirmed', 'approve', 'approved'].includes(normalized)) return 'accepted'
+  if (['reject', 'rejected', 'decline', 'declined', 'deny', 'denied'].includes(normalized)) return 'rejected'
+  return ''
+}
+
+export const respondToApplicantJobOffer = async (payload = {}) => {
+  await waitForAuthReady()
+
+  const applicationId = text(payload?.applicationId || payload?.application_id || payload?.id)
+  const offerId = text(
+    payload?.offerId
+    || payload?.offer_id
+    || payload?.jobOfferId
+    || payload?.job_offer_id
+    || applicationId,
+  )
+  const response = normalizeApplicantOfferResponse(
+    payload?.response || payload?.offerStatus || payload?.offer_status,
+  )
+
+  if (!applicationId) {
+    throw new Error('Missing application ID for this job offer response.')
+  }
+
+  if (!response) {
+    throw new Error('Choose whether to confirm or reject the job offer first.')
+  }
+
+  try {
+    const respondToApplicantJobOfferCallable = httpsCallable(
+      cloudFunctions,
+      'respondToApplicantJobOffer',
+      { timeout: 4000 },
+    )
+    const result = await respondToApplicantJobOfferCallable({
+      applicationId,
+      offerId,
+      response,
+      applicantResponseNote: text(payload?.applicantResponseNote || payload?.applicant_response_note),
+    })
+
+    return {
+      response,
+      offer: normalizeJobOfferRecord(result?.data?.offer),
+      application: result?.data?.application || null,
+      alreadyResponded: result?.data?.alreadyResponded === true,
+    }
+  } catch (error) {
+    const errorCode = text(error?.code).toLowerCase()
+
+    if (errorCode === 'functions/unauthenticated') {
+      throw new Error('Sign in again before responding to this job offer.')
+    }
+
+    if (errorCode === 'functions/permission-denied') {
+      throw new Error(text(error?.message) || 'Your account is not allowed to respond to this job offer.')
+    }
+
+    if (errorCode === 'functions/not-found' || errorCode === 'functions/unimplemented') {
+      throw new Error(
+        'The latest applicant job-offer response Cloud Function is not deployed yet. Deploy the updated functions, then try again.',
+      )
+    }
+
+    if (errorCode === 'functions/failed-precondition') {
+      throw new Error(text(error?.message) || 'This job offer can no longer be changed.')
+    }
+
+    if (errorCode === 'functions/invalid-argument') {
+      throw new Error(text(error?.message) || 'This job offer response is missing required details.')
+    }
+
+    throw new Error(
+      toJobOfferErrorMessage(
+        error,
+        text(error?.message) || 'Unable to respond to this job offer right now.',
+      ),
+    )
+  }
+}
+
 export const subscribeToBusinessJobOffers = (workspaceOwnerOptions, handleNext, handleError) => {
   let isClosed = false
   const stopHandlers = []

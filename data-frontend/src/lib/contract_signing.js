@@ -7,14 +7,21 @@ import {
   setDoc,
   where,
 } from 'firebase/firestore'
+import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage'
 import { httpsCallable } from 'firebase/functions'
-import { auth, cloudFunctions, db } from '@/firebase'
+import { auth, cloudFunctions, db, storage } from '@/firebase'
 
 export const CONTRACT_SIGNING_COLLECTION = 'contract_signing'
 
 const text = (value) => String(value || '').trim()
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
 const nowIso = () => new Date().toISOString()
+const normalizeFileName = (value = '', fallback = 'contract-file') =>
+  text(value)
+    .replace(/[^a-z0-9._-]+/gi, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+  || fallback
 const timestampText = (value) => {
   if (!value) return ''
   if (typeof value === 'string') return value.trim()
@@ -43,6 +50,8 @@ const resolveAuthorizedEmails = (fallbackValues = []) =>
   uniqueEmailValues([normalizeEmail(auth.currentUser?.email), ...fallbackValues])
 const parseContractActivityTime = (record = {}) =>
   Math.max(
+    Date.parse(String(record?.applicantSignedContractUploadedAt || record?.applicant_signed_contract_uploaded_at || '').trim()) || 0,
+    Date.parse(String(record?.businessContractUploadedAt || record?.business_contract_uploaded_at || '').trim()) || 0,
     Date.parse(String(record?.updatedAt || record?.updated_at || '').trim()) || 0,
     Date.parse(String(record?.businessSignedAt || record?.business_signed_at || '').trim()) || 0,
     Date.parse(String(record?.applicantSignedAt || record?.applicant_signed_at || '').trim()) || 0,
@@ -78,6 +87,18 @@ export const normalizeContractSigningRecord = (record = {}) => ({
   employmentType: text(record.employmentType || record.employment_type),
   startDate: text(record.startDate || record.start_date),
   notes: text(record.notes),
+  businessContractFileName: text(record.businessContractFileName || record.business_contract_file_name),
+  businessContractStoragePath: text(record.businessContractStoragePath || record.business_contract_storage_path),
+  businessContractDownloadUrl: text(record.businessContractDownloadUrl || record.business_contract_download_url),
+  businessContractContentType: text(record.businessContractContentType || record.business_contract_content_type),
+  businessContractUploadedAt: timestampText(record.businessContractUploadedAt || record.business_contract_uploaded_at),
+  businessContractFileSize: Number(record.businessContractFileSize || record.business_contract_file_size || 0) || 0,
+  applicantSignedContractFileName: text(record.applicantSignedContractFileName || record.applicant_signed_contract_file_name),
+  applicantSignedContractStoragePath: text(record.applicantSignedContractStoragePath || record.applicant_signed_contract_storage_path),
+  applicantSignedContractDownloadUrl: text(record.applicantSignedContractDownloadUrl || record.applicant_signed_contract_download_url),
+  applicantSignedContractContentType: text(record.applicantSignedContractContentType || record.applicant_signed_contract_content_type),
+  applicantSignedContractUploadedAt: timestampText(record.applicantSignedContractUploadedAt || record.applicant_signed_contract_uploaded_at),
+  applicantSignedContractFileSize: Number(record.applicantSignedContractFileSize || record.applicant_signed_contract_file_size || 0) || 0,
   sentAt: timestampText(record.sentAt || record.sent_at),
   applicantViewedAt: timestampText(record.applicantViewedAt || record.applicant_viewed_at),
   applicantSignatureName: text(record.applicantSignatureName || record.applicant_signature_name),
@@ -124,6 +145,18 @@ const buildContractPayload = (record = {}, { includeCompletion = true } = {}) =>
     employment_type: normalized.employmentType,
     start_date: normalized.startDate,
     notes: normalized.notes,
+    business_contract_file_name: normalized.businessContractFileName,
+    business_contract_storage_path: normalized.businessContractStoragePath,
+    business_contract_download_url: normalized.businessContractDownloadUrl,
+    business_contract_content_type: normalized.businessContractContentType,
+    business_contract_uploaded_at: normalized.businessContractUploadedAt,
+    business_contract_file_size: normalized.businessContractFileSize || undefined,
+    applicant_signed_contract_file_name: normalized.applicantSignedContractFileName,
+    applicant_signed_contract_storage_path: normalized.applicantSignedContractStoragePath,
+    applicant_signed_contract_download_url: normalized.applicantSignedContractDownloadUrl,
+    applicant_signed_contract_content_type: normalized.applicantSignedContractContentType,
+    applicant_signed_contract_uploaded_at: normalized.applicantSignedContractUploadedAt,
+    applicant_signed_contract_file_size: normalized.applicantSignedContractFileSize || undefined,
     sent_at: normalized.sentAt,
     applicant_viewed_at: normalized.applicantViewedAt,
     applicant_signature_name: normalized.applicantSignatureName,
@@ -181,6 +214,82 @@ export const saveBusinessContractRecord = async (payload = {}) => {
   }
 }
 
+const uploadContractStorageFile = async ({ path, file }) => {
+  const fileRef = storageRef(storage, path)
+  await uploadBytes(fileRef, file, file?.type ? { contentType: file.type } : undefined)
+  const downloadUrl = await getDownloadURL(fileRef)
+
+  return {
+    storagePath: path,
+    downloadUrl,
+    fileName: text(file?.name),
+    contentType: text(file?.type),
+    fileSize: Number(file?.size || 0) || 0,
+  }
+}
+
+export const sendBusinessContractFile = async (payload = {}, file) => {
+  await waitForAuthReady()
+
+  const normalized = normalizeContractSigningRecord({
+    ...payload,
+    workspaceOwnerId: payload?.workspaceOwnerId || payload?.workspace_owner_id || auth.currentUser?.uid,
+    workspaceOwnerEmail: payload?.workspaceOwnerEmail || payload?.workspace_owner_email || auth.currentUser?.email,
+  })
+
+  if (!file) {
+    throw new Error('Upload the contract file before sending it to the applicant.')
+  }
+
+  if (!normalized.workspaceOwnerId || !normalized.applicationId || !normalized.applicantId || !normalized.jobId) {
+    throw new Error('Missing business, application, applicant, or job details for the contract.')
+  }
+
+  const documentId = text(payload.id) || buildContractId(normalized)
+  const docRef = doc(db, CONTRACT_SIGNING_COLLECTION, documentId)
+
+  // Create the contract document first so Storage rules can validate the shared contract path.
+  await setDoc(docRef, buildContractPayload({
+    ...normalized,
+    id: documentId,
+    status: 'draft',
+    sentAt: '',
+  }), { merge: true })
+
+  const uploadedAt = nowIso()
+  const sentAt = nowIso()
+  const safeFileName = normalizeFileName(file?.name, 'business-contract')
+  const storagePath = `contract_signing/${documentId}/business/${Date.now()}-${safeFileName}`
+  const uploadedFile = await uploadContractStorageFile({ path: storagePath, file })
+
+  await setDoc(docRef, buildContractPayload({
+    ...normalized,
+    id: documentId,
+    status: 'sent',
+    sentAt,
+    businessContractFileName: uploadedFile.fileName,
+    businessContractStoragePath: uploadedFile.storagePath,
+    businessContractDownloadUrl: uploadedFile.downloadUrl,
+    businessContractContentType: uploadedFile.contentType,
+    businessContractUploadedAt: uploadedAt,
+    businessContractFileSize: uploadedFile.fileSize,
+  }), { merge: true })
+
+  return normalizeContractSigningRecord({
+    ...normalized,
+    id: documentId,
+    status: 'sent',
+    sentAt,
+    businessContractFileName: uploadedFile.fileName,
+    businessContractStoragePath: uploadedFile.storagePath,
+    businessContractDownloadUrl: uploadedFile.downloadUrl,
+    businessContractContentType: uploadedFile.contentType,
+    businessContractUploadedAt: uploadedAt,
+    businessContractFileSize: uploadedFile.fileSize,
+    updatedAt: sentAt,
+  })
+}
+
 export const markApplicantContractViewed = async (contractId) => {
   await waitForAuthReady()
 
@@ -236,6 +345,50 @@ export const signApplicantContractRecord = async (contractId, payload = {}) => {
     applicantSignatureName,
     applicantSignatureDataUrl,
     applicantSignedAt: signedAt,
+  }
+}
+
+export const submitApplicantSignedContractFile = async (contractId, file, payload = {}) => {
+  await waitForAuthReady()
+
+  const normalizedContractId = text(contractId)
+  if (!normalizedContractId) {
+    throw new Error('Missing contract ID before sending the signed file back.')
+  }
+  if (!file) {
+    throw new Error('Upload the signed contract file before returning it to the business owner.')
+  }
+
+  const returnedAt = nowIso()
+  const safeFileName = normalizeFileName(file?.name, 'signed-contract')
+  const storagePath = `contract_signing/${normalizedContractId}/applicant/${Date.now()}-${safeFileName}`
+  const uploadedFile = await uploadContractStorageFile({ path: storagePath, file })
+
+  await setDoc(doc(db, CONTRACT_SIGNING_COLLECTION, normalizedContractId), {
+    status: 'applicant_signed',
+    applicant_signed_contract_file_name: uploadedFile.fileName,
+    applicant_signed_contract_storage_path: uploadedFile.storagePath,
+    applicant_signed_contract_download_url: uploadedFile.downloadUrl,
+    applicant_signed_contract_content_type: uploadedFile.contentType,
+    applicant_signed_contract_uploaded_at: returnedAt,
+    applicant_signed_contract_file_size: uploadedFile.fileSize || undefined,
+    applicant_signed_at: returnedAt,
+    applicant_viewed_at: text(payload?.applicantViewedAt || payload?.applicant_viewed_at) || returnedAt,
+    updated_at: returnedAt,
+    updated_at_server: serverTimestamp(),
+  }, { merge: true })
+
+  return {
+    id: normalizedContractId,
+    status: 'applicant_signed',
+    applicantSignedContractFileName: uploadedFile.fileName,
+    applicantSignedContractStoragePath: uploadedFile.storagePath,
+    applicantSignedContractDownloadUrl: uploadedFile.downloadUrl,
+    applicantSignedContractContentType: uploadedFile.contentType,
+    applicantSignedContractUploadedAt: returnedAt,
+    applicantSignedContractFileSize: uploadedFile.fileSize,
+    applicantSignedAt: returnedAt,
+    updatedAt: returnedAt,
   }
 }
 
@@ -315,8 +468,12 @@ export const subscribeToBusinessContracts = (workspaceOwnerOptions, handleNext, 
     options?.workspaceOwnerEmail,
     options?.ownerEmail,
   ])
+  const applicationIds = uniqueTextValues([
+    ...(Array.isArray(options?.applicationIds) ? options.applicationIds : []),
+    options?.applicationId,
+  ])
 
-  if (!workspaceOwnerIds.length && !workspaceOwnerEmails.length) {
+  if (!workspaceOwnerIds.length && !workspaceOwnerEmails.length && !applicationIds.length) {
     if (typeof handleNext === 'function') handleNext([])
     return () => {}
   }
@@ -371,6 +528,20 @@ export const subscribeToBusinessContracts = (workspaceOwnerOptions, handleNext, 
       query(
         collection(db, CONTRACT_SIGNING_COLLECTION),
         where('workspace_owner_email', '==', ownerEmail),
+      ),
+      (snapshot) => syncSnapshot(sourceKey, snapshot),
+      (error) => {
+        if (typeof handleError === 'function') handleError(error)
+      },
+    ))
+  })
+
+  applicationIds.forEach((applicationId) => {
+    const sourceKey = `application-id:${applicationId}`
+    stopHandlers.push(onSnapshot(
+      query(
+        collection(db, CONTRACT_SIGNING_COLLECTION),
+        where('application_id', '==', applicationId),
       ),
       (snapshot) => syncSnapshot(sourceKey, snapshot),
       (error) => {

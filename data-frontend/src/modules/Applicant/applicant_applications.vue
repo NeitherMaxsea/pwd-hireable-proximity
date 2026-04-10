@@ -68,19 +68,32 @@ const preparedApplicationRecords = computed(() =>
 
     const preparedTimelineItems = timelineItems.map((step, index) => {
       const tone = getTimelineStepTone(step)
-      let state = 'active'
+      const declaredState = String(step?.state || '').trim().toLowerCase()
+      let state = ['active', 'complete', 'failed', 'pending'].includes(declaredState)
+        ? declaredState
+        : 'active'
 
-      if (tone === 'success') {
-        state = 'complete'
-      } else if (tone === 'danger' || tone === 'muted') {
-        state = 'failed'
-      } else if (hasPreviousOpenStep) {
-        state = 'pending'
+      if (!declaredState) {
+        if (tone === 'success') {
+          state = 'complete'
+        } else if (tone === 'danger' || tone === 'muted') {
+          state = 'failed'
+        } else if (hasPreviousOpenStep) {
+          state = 'pending'
+        }
+
+        if (tone !== 'success') {
+          hasPreviousOpenStep = true
+        }
       }
 
-      if (tone !== 'success') {
-        hasPreviousOpenStep = true
-      }
+      const visualTone = state === 'complete'
+        ? 'success'
+        : state === 'failed'
+          ? 'danger'
+          : state === 'pending'
+            ? 'muted'
+            : tone
 
       const lineStateClass = state === 'active'
         ? 'partial'
@@ -93,11 +106,11 @@ const preparedApplicationRecords = computed(() =>
         visualIcon: timelineVisualIcon(step),
         itemClass: `applicant-applications-page__timeline-item--${state}`,
         dotClass: [
-          `applicant-applications-page__timeline-dot--${tone}`,
+          `applicant-applications-page__timeline-dot--${visualTone}`,
           `applicant-applications-page__timeline-dot--${state}`,
         ],
         badgeClass: [
-          `applicant-applications-page__timeline-badge--${tone}`,
+          `applicant-applications-page__timeline-badge--${visualTone}`,
           `applicant-applications-page__timeline-badge--${state}`,
         ],
         badgeIcon:
@@ -110,7 +123,7 @@ const preparedApplicationRecords = computed(() =>
           index === timelineItems.length - 1
             ? []
             : [
-                `applicant-applications-page__timeline-line--${tone}`,
+                `applicant-applications-page__timeline-line--${visualTone}`,
                 `applicant-applications-page__timeline-line--${lineStateClass}`,
               ],
       }
@@ -167,6 +180,7 @@ const timelineVisualIcon = (step) => {
   if (timelineId.startsWith('initial-interview')) return 'bi bi-camera-video'
   if (timelineId.startsWith('final-interview')) return 'bi bi-people'
   if (timelineId.startsWith('job-offer')) return 'bi bi-briefcase'
+  if (timelineId.startsWith('contract-signing')) return 'bi bi-file-earmark-text'
   if (timelineId.startsWith('training')) return 'bi bi-mortarboard'
   return 'bi bi-circle'
 }

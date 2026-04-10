@@ -1,5 +1,5 @@
 ﻿<script setup>
-import { toRefs } from 'vue'
+import { computed, ref, toRefs, watch } from 'vue'
 const props = defineProps([
   'jobPostingTab',
   'isEditingJobPost',
@@ -21,8 +21,6 @@ const props = defineProps([
   'JOB_POSTING_MAX_VACANCIES',
   'JOB_POSTING_DISABILITY_TYPES',
   'jobPostingDisabilityLabel',
-  'jobPostingDisabilityTypeNeedsSpecification',
-  'getJobPostingImpairmentSpecificationPlaceholder',
   'JOB_POSTING_LANGUAGE_OPTIONS',
   'jobPostingLanguageLabel',
   'handleJobPostingFieldChange',
@@ -76,8 +74,6 @@ const {
   JOB_POSTING_MAX_VACANCIES,
   JOB_POSTING_DISABILITY_TYPES,
   jobPostingDisabilityLabel,
-  jobPostingDisabilityTypeNeedsSpecification,
-  getJobPostingImpairmentSpecificationPlaceholder,
   JOB_POSTING_LANGUAGE_OPTIONS,
   jobPostingLanguageLabel,
   handleJobPostingFieldChange,
@@ -110,6 +106,46 @@ const {
   setJobPostingDisabilityDropdownElement,
   setJobPostingLanguageDropdownElement,
 } = toRefs(props)
+
+const isDisabilityModalOpen = ref(false)
+const disabilityModalSelection = ref([])
+const selectedDisabilityValues = computed(() =>
+  String(jobPostingDraft.value.disabilityType || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean),
+)
+
+watch(
+  selectedDisabilityValues,
+  (value) => {
+    disabilityModalSelection.value = [...value]
+  },
+  { immediate: true },
+)
+
+const openDisabilityModal = () => {
+  disabilityModalSelection.value = [...selectedDisabilityValues.value]
+  isDisabilityModalOpen.value = true
+}
+
+const closeDisabilityModal = () => {
+  isDisabilityModalOpen.value = false
+}
+
+const toggleDisabilityModalOption = (value) => {
+  const normalizedValue = String(value || '').trim()
+  if (!normalizedValue) return
+
+  disabilityModalSelection.value = disabilityModalSelection.value.includes(normalizedValue)
+    ? disabilityModalSelection.value.filter((entry) => entry !== normalizedValue)
+    : [...disabilityModalSelection.value, normalizedValue]
+}
+
+const applyDisabilityModalSelection = () => {
+  handleJobPostingFieldChange.value('disabilityType', disabilityModalSelection.value)
+  closeDisabilityModal()
+}
 </script>
 
 <template>
@@ -342,38 +378,16 @@ const {
                           <div class="business-job-post__grid business-job-post__grid--three">
                             <label class="business-job-post__field">
                               <span>Disability Type</span>
-                              <div
-                                :ref="setJobPostingDisabilityDropdownElement"
-                                class="business-job-post__select-wrap"
-                                :class="{ 'is-open': isJobPostingDropdownOpen('disability') }"
+                              <button
+                                type="button"
+                                class="business-job-post__select-trigger"
+                                :class="{ 'is-filled': jobPostingDraft.disabilityType }"
+                                @click="openDisabilityModal"
                               >
-                                <button
-                                  type="button"
-                                  class="business-job-post__select-trigger"
-                                  :class="{ 'is-filled': jobPostingDraft.disabilityType }"
-                                  :aria-expanded="isJobPostingDropdownOpen('disability') ? 'true' : 'false'"
-                                  @click="toggleJobPostingDropdown('disability')"
-                                >
-                                  <span>{{ jobPostingDisabilityLabel }}</span>
-                                  <i class="bi bi-chevron-down business-job-post__select-icon" aria-hidden="true" />
-                                </button>
-
-                                <transition name="business-job-post__dropdown">
-                                  <div v-if="isJobPostingDropdownOpen('disability')" class="business-job-post__select-menu business-job-post__select-menu--scroll">
-                                    <button
-                                      v-for="type in JOB_POSTING_DISABILITY_TYPES"
-                                      :key="type.value"
-                                      type="button"
-                                      class="business-job-post__select-option"
-                                      :class="{ 'is-active': jobPostingDraft.disabilityType === type.value }"
-                                      @click="selectJobPostingDropdownValue('disabilityType', type.value)"
-                                    >
-                                      <span class="business-job-post__select-option-mark" aria-hidden="true" />
-                                      <span>{{ type.label }}</span>
-                                    </button>
-                                  </div>
-                                </transition>
-                              </div>
+                                <span>{{ jobPostingDisabilityLabel }}</span>
+                                <i class="bi bi-ui-checks-grid business-job-post__select-icon" aria-hidden="true" />
+                              </button>
+                              <small class="business-job-post__field-help">Choose one or more disability types from the modal.</small>
                             </label>
 
                             <label class="business-job-post__field">
@@ -422,14 +436,6 @@ const {
                             </label>
                           </div>
 
-                          <label v-if="jobPostingDisabilityTypeNeedsSpecification" class="business-job-post__field business-job-post__field--wide">
-                            <span>Impairment Specification</span>
-                            <input
-                              v-model="jobPostingDraft.impairmentSpecification"
-                              type="text"
-                              :placeholder="getJobPostingImpairmentSpecificationPlaceholder(jobPostingDraft.disabilityType)"
-                            />
-                          </label>
                         </section>
 
                         <section class="business-job-post__group">
@@ -632,12 +638,7 @@ const {
                         <span>Suitable For</span>
                         <strong>
                           {{
-                            buildJobPostingDisabilityFitLabel(
-                              jobPostingDraft.disabilityType,
-                              jobPostingDisabilityTypeNeedsSpecification
-                                ? jobPostingDraft.impairmentSpecification
-                                : '',
-                            ) || 'Select disability type'
+                            buildJobPostingDisabilityFitLabel(jobPostingDraft.disabilityType) || 'Select disability type'
                           }}
                         </strong>
                       </div>
@@ -756,4 +757,117 @@ const {
 
               </div>
             </section>
+  <Teleport to="body">
+    <transition name="business-toast">
+      <div
+        v-if="isDisabilityModalOpen"
+        class="business-job-post__modal-backdrop business-job-post__modal-backdrop--disability"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="job-post-disability-modal-title"
+        @click.self="closeDisabilityModal"
+      >
+        <div class="business-job-post__modal business-job-post__modal--disability">
+          <div class="business-job-post__modal-head">
+            <div>
+              <p class="business-job-post__tips-label">Applicant Preferences</p>
+              <strong id="job-post-disability-modal-title">Select disability types</strong>
+              <p class="business-job-post__modal-copy">
+                Choose one or more disability groups that match this posting.
+              </p>
+            </div>
+            <button type="button" class="business-job-post__modal-close" aria-label="Close disability selector" @click="closeDisabilityModal">
+              <i class="bi bi-x-lg" />
+            </button>
+          </div>
+
+          <div class="business-job-post__modal-body">
+            <div class="business-job-post__checklist">
+            <label
+              v-for="type in JOB_POSTING_DISABILITY_TYPES"
+              :key="type.value"
+              class="business-job-post__check-option"
+              :class="{ 'is-active': disabilityModalSelection.includes(type.value) }"
+            >
+              <input
+                type="checkbox"
+                :checked="disabilityModalSelection.includes(type.value)"
+                @change="toggleDisabilityModalOption(type.value)"
+              />
+              <span>{{ type.label }}</span>
+            </label>
+          </div>
+          </div>
+
+          <div class="business-job-post__modal-foot">
+            <span class="business-job-post__modal-selection-count">
+              {{ disabilityModalSelection.length }} selected
+            </span>
+            <div class="business-job-post__modal-actions">
+              <button type="button" class="business-job-post__secondary" @click="closeDisabilityModal">Cancel</button>
+              <button type="button" class="business-job-post__save" @click="applyDisabilityModalSelection">Apply Selection</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </transition>
+  </Teleport>
 </template>
+
+<style scoped>
+.business-job-post__modal-backdrop--disability {
+  z-index: 2600;
+}
+
+.business-job-post__modal--disability {
+  width: min(100%, 36rem);
+  border-radius: 0;
+  border: 1px solid rgba(142, 164, 153, 0.42);
+  background: #fdfefd;
+  box-shadow: 0 26px 70px rgba(10, 24, 17, 0.22);
+}
+
+.business-job-post__modal--disability .business-job-post__modal-head,
+.business-job-post__modal--disability .business-job-post__modal-foot {
+  padding-inline: 1.35rem;
+}
+
+.business-job-post__modal--disability .business-job-post__modal-head {
+  align-items: flex-start;
+}
+
+.business-job-post__modal--disability .business-job-post__modal-copy {
+  margin-top: 0.45rem;
+}
+
+.business-job-post__modal--disability .business-job-post__modal-body {
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+}
+
+.business-job-post__modal--disability .business-job-post__modal-close {
+  border-radius: 0;
+  background: #f7faf8;
+}
+
+.business-job-post__modal--disability .business-job-post__check-option {
+  border-radius: 0;
+  min-height: 3.4rem;
+  background: #ffffff;
+}
+
+.business-job-post__modal--disability .business-job-post__check-option.is-active {
+  background: #eef6f1;
+  box-shadow: inset 4px 0 0 #2c9a60;
+}
+
+.business-job-post__modal--disability .business-job-post__check-option input {
+  width: 1rem;
+  height: 1rem;
+}
+
+.business-job-post__modal--disability .business-job-post__modal-actions {
+  align-items: center;
+}
+
+</style>

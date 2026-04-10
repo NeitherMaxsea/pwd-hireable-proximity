@@ -12,7 +12,8 @@ import BUserSidebar from '@/modules/Employer/Business/business_user_sidebar.vue'
 import BusinessDashboardStage from '@/modules/Employer/Business/business-dashboard.vue'
 import BusinessJobPostingStage from '@/modules/Employer/Business/business-job-posting.vue'
 import BusinessApplicantManagementStage from '@/modules/Employer/Business/business-applicant-management.vue'
-import BusinessAssessmentStage from '@/modules/Employer/Business/business-assessment-stage.vue'
+import BusinessAssessmentStage from '@/modules/Employer/Business/business-assessment-stage-live.vue'
+import BusinessContractSigningStage from '@/modules/Employer/Business/business-contract-signing-stage.vue'
 import BusinessIssueOfferStage from '@/modules/Employer/Business/business-issue-offer-stage.vue'
 import BusinessInterviewStage from '@/modules/Employer/Business/business-interview-stage.vue'
 import BusinessSubscriptionStage from '@/modules/Employer/Business/business-subscription-stage.vue'
@@ -26,6 +27,8 @@ import {
   getStoredAuthUser,
   subscribeToBusinessMemberEmployers,
   subscribeToBusinessWorkspaceUsers,
+  updateEmployerAdminDetails,
+  uploadEmployerBusinessAvatar,
 } from '@/lib/auth'
 import { subscribeToBusinessJobApplications } from '@/lib/apply_jobs'
 import { subscribeToWorkspaceJobs } from '@/lib/jobs'
@@ -71,6 +74,18 @@ const businessJobPosts = ref([])
 const businessJobApplications = ref([])
 const workspaceUserDirectory = ref([])
 const employeeDirectory = ref([])
+const profileAvatarInputRef = ref(null)
+const isProfileAvatarLoading = ref(false)
+const profileStatusMessage = ref('')
+const profileStatusTone = ref('success')
+const profileForm = ref({
+  companyName: '',
+  email: '',
+  category: '',
+  location: '',
+  contactPerson: '',
+  avatar: '',
+})
 
 const storedUserId = computed(() => text(storedUser.value?.id || storedUser.value?.uid))
 const workspaceOwnerId = computed(() => text(storedUser.value?.workspace_owner_id || storedUser.value?.workspaceOwnerId))
@@ -150,6 +165,22 @@ const loggedInBusinessUserRoleLabel = computed(() => {
 
   return 'Business Owner'
 })
+const businessProfileName = computed(() =>
+  text(profileForm.value.companyName || businessSidebarBrandName.value) || 'Business Workspace',
+)
+const businessProfileEmail = computed(() =>
+  emailText(profileForm.value.email || loggedInBusinessUserEmail.value),
+)
+const businessProfileCategory = computed(() =>
+  text(profileForm.value.category || storedUser.value?.company_category) || 'Not set',
+)
+const businessProfileLocation = computed(() =>
+  text(profileForm.value.location || storedUser.value?.company_location) || 'Not set',
+)
+const businessProfileContactPerson = computed(() =>
+  text(profileForm.value.contactPerson || storedUser.value?.name || storedUser.value?.full_name) || 'Not set',
+)
+const businessProfileInitials = computed(() => buildInitials(businessProfileName.value))
 
 const businessNavbarSettingsItems = computed(() => {
   const items = [
@@ -196,14 +227,21 @@ const sectionMeta = {
     id: 'contract-signing',
     label: 'Contract Signing',
     title: 'Contract Signing',
-    description: 'Contract signing is temporarily paused, but the menu is restored so the Business sidebar looks complete again.',
+    description: 'Send contract files, receive signed copies back from applicants, and monitor the exchange in real time.',
     eyebrow: 'Recruitment',
   },
   'assessment-management': {
     id: 'assessment-management',
-    label: 'Assessment Management',
-    title: 'Assessment Management',
-    description: 'Create assessments and review applicant scores with the restored frontend business layout.',
+    label: 'Create Assessment',
+    title: 'Create Assessment',
+    description: 'Build and edit screening templates inside the restored assessment workspace.',
+    eyebrow: 'Assessment',
+  },
+  'assessment-assignment': {
+    id: 'assessment-assignment',
+    label: 'Assign Assessment',
+    title: 'Assign Assessment',
+    description: 'Assign assessment templates to applicants and keep assignment status visible in the same workspace.',
     eyebrow: 'Assessment',
   },
   'applicant-score': {
@@ -217,7 +255,14 @@ const sectionMeta = {
     id: 'interview-scheduling',
     label: 'Interview Scheduling',
     title: 'Interview Scheduling',
-    description: 'Schedule interviews and review interview status in the restored frontend layout.',
+    description: 'Create live interview schedules and send them directly to the applicant interview page.',
+    eyebrow: 'Recruitment',
+  },
+  'interview-status': {
+    id: 'interview-status',
+    label: 'Interview Status',
+    title: 'Interview Status',
+    description: 'Review applicant interview responses, reschedule requests, and live interview outcomes in one table.',
     eyebrow: 'Recruitment',
   },
   'training-templates': {
@@ -295,6 +340,7 @@ const ownerSidebarGroups = [
     icon: 'bi bi-ui-checks-grid',
     items: [
       { id: 'assessment-management', label: 'Create Assessment' },
+      { id: 'assessment-assignment', label: 'Assign Assessment' },
       { id: 'applicant-score', label: 'Applicant Score' },
     ],
   },
@@ -304,6 +350,7 @@ const ownerSidebarGroups = [
     icon: 'bi bi-calendar-event-fill',
     items: [
       { id: 'interview-scheduling', label: 'Interview Scheduling' },
+      { id: 'interview-status', label: 'Interview Status' },
     ],
   },
   {
@@ -455,6 +502,156 @@ const stopDashboardSyncSubscriptions = () => {
   stopDashboardEmployeesSync = () => {}
 }
 
+const syncProfileFormFromStoredUser = () => {
+  profileForm.value = {
+    companyName: text(
+      storedUser.value?.company_name
+      || storedUser.value?.business_name
+      || storedUser.value?.workspace_owner_name
+      || storedUser.value?.workspaceOwnerName
+      || storedUser.value?.name,
+    ),
+    email: text(
+      storedUser.value?.business_contact_email
+      || storedUser.value?.email
+      || storedUser.value?.gmail,
+    ),
+    category: text(storedUser.value?.company_category || storedUser.value?.category),
+    location: text(storedUser.value?.company_location || storedUser.value?.location),
+    contactPerson: text(storedUser.value?.name || storedUser.value?.full_name),
+    avatar: text(
+      storedUser.value?.business_avatar
+      || storedUser.value?.business_avatar_path
+      || storedUser.value?.avatar
+      || storedUser.value?.profile_avatar
+      || storedUser.value?.photoURL
+      || storedUser.value?.photo_url,
+    ),
+  }
+  isProfileAvatarLoading.value = false
+}
+
+const setProfileStatus = (message = '', tone = 'success') => {
+  profileStatusMessage.value = text(message)
+  profileStatusTone.value = text(tone) || 'success'
+}
+
+const openProfileAvatarPicker = () => {
+  profileAvatarInputRef.value?.click()
+}
+
+const removeProfileAvatar = async () => {
+  if (isProfileAvatarLoading.value || !storedUserId.value) return
+
+  isProfileAvatarLoading.value = true
+  try {
+    await updateEmployerAdminDetails(storedUserId.value, {
+      company_name: businessProfileName.value,
+      name: businessProfileContactPerson.value,
+      business_contact_email: businessProfileEmail.value,
+      company_category: text(profileForm.value.category),
+      company_location: text(profileForm.value.location),
+      business_avatar: '',
+      avatar: '',
+      business_avatar_path: '',
+      avatar_path: '',
+    })
+
+    profileForm.value = {
+      ...profileForm.value,
+      avatar: '',
+    }
+    storedUser.value = {
+      ...(storedUser.value || {}),
+      business_avatar: '',
+      business_avatar_path: '',
+      avatar: '',
+      avatar_path: '',
+      profile_avatar: '',
+    }
+    if (profileAvatarInputRef.value) profileAvatarInputRef.value.value = ''
+    setProfileStatus('Profile photo removed.', 'success')
+  } catch (error) {
+    setProfileStatus(error instanceof Error ? error.message : 'Unable to remove profile photo right now.', 'error')
+  } finally {
+    isProfileAvatarLoading.value = false
+  }
+}
+
+const handleProfileAvatarChange = (event) => {
+  const file = event?.target?.files?.[0]
+  if (!file || !storedUserId.value) return
+
+  isProfileAvatarLoading.value = true
+
+  uploadEmployerBusinessAvatar(storedUserId.value, file)
+    .then((uploadedAvatar) => {
+      const avatarUrl = text(uploadedAvatar?.url)
+      const avatarPath = text(uploadedAvatar?.path)
+
+      profileForm.value = {
+        ...profileForm.value,
+        avatar: avatarUrl,
+      }
+
+      storedUser.value = {
+        ...(storedUser.value || {}),
+        business_avatar: avatarUrl,
+        business_avatar_path: avatarPath,
+        avatar: avatarUrl,
+        avatar_path: avatarPath,
+        profile_avatar: avatarUrl,
+      }
+      setProfileStatus('Profile photo updated.', 'success')
+    })
+    .catch((error) => {
+      setProfileStatus(error instanceof Error ? error.message : 'Unable to upload profile photo right now.', 'error')
+    })
+    .finally(() => {
+      isProfileAvatarLoading.value = false
+    })
+}
+
+const saveBusinessProfile = async () => {
+  if (!storedUserId.value) return
+
+  try {
+    const updatedProfile = await updateEmployerAdminDetails(storedUserId.value, {
+      company_name: businessProfileName.value,
+      name: businessProfileContactPerson.value,
+      business_contact_email: businessProfileEmail.value,
+      company_category: text(profileForm.value.category),
+      company_location: text(profileForm.value.location),
+      business_avatar: text(profileForm.value.avatar),
+      avatar: text(profileForm.value.avatar),
+      business_avatar_path: text(
+        storedUser.value?.business_avatar_path
+        || storedUser.value?.avatar_path,
+      ),
+      avatar_path: text(
+        storedUser.value?.avatar_path
+        || storedUser.value?.business_avatar_path,
+      ),
+    })
+
+    storedUser.value = {
+      ...(storedUser.value || {}),
+      ...updatedProfile,
+      company_name: text(updatedProfile?.company_name || businessProfileName.value),
+      business_name: text(updatedProfile?.company_name || businessProfileName.value),
+      business_contact_email: text(updatedProfile?.business_contact_email || businessProfileEmail.value),
+      company_category: text(updatedProfile?.company_category || profileForm.value.category),
+      company_location: text(updatedProfile?.company_location || profileForm.value.location),
+      name: text(updatedProfile?.name || businessProfileContactPerson.value),
+      business_avatar: text(updatedProfile?.business_avatar || profileForm.value.avatar),
+      avatar: text(updatedProfile?.avatar || updatedProfile?.business_avatar || profileForm.value.avatar),
+    }
+    setProfileStatus('Business profile updated successfully.', 'success')
+  } catch (error) {
+    setProfileStatus(error instanceof Error ? error.message : 'Unable to save the business profile right now.', 'error')
+  }
+}
+
 const syncDashboardSubscriptions = () => {
   stopDashboardSyncSubscriptions()
 
@@ -524,8 +721,10 @@ const getSidebarItemIcon = (sectionId = '') => {
     'issue-offer': 'bi bi-envelope-paper-fill',
     'contract-signing': 'bi bi-pen-fill',
     'assessment-management': 'bi bi-ui-checks-grid',
+    'assessment-assignment': 'bi bi-clipboard-check-fill',
     'applicant-score': 'bi bi-bar-chart-fill',
     'interview-scheduling': 'bi bi-calendar-event-fill',
+    'interview-status': 'bi bi-table',
     'training-templates': 'bi bi-journal-text',
     'user-overview': 'bi bi-person-vcard-fill',
     'create-user': 'bi bi-person-plus-fill',
@@ -679,6 +878,7 @@ const handleDocumentClick = () => {
 
 onMounted(() => {
   syncDashboardSubscriptions()
+  syncProfileFormFromStoredUser()
   if (typeof document !== 'undefined') {
     document.addEventListener('click', handleDocumentClick)
   }
@@ -693,6 +893,14 @@ watch(
   () => {
     syncDashboardSubscriptions()
   },
+)
+
+watch(
+  storedUser,
+  () => {
+    syncProfileFormFromStoredUser()
+  },
+  { deep: true },
 )
 
 onBeforeUnmount(() => {
@@ -785,6 +993,8 @@ onBeforeUnmount(() => {
               :workspace-owner-id="workspaceOwnerId"
               :workspace-owner-email="workspaceOwnerEmail"
               :business-name="businessSidebarBrandName"
+              :business-category="businessProfileCategory"
+              :business-avatar="loggedInBusinessUserAvatar"
               :actor-id="storedUserId"
               :actor-name="loggedInBusinessUserName"
               :is-employee-workspace-mode="isBusinessEmployeeWorkspaceMode"
@@ -801,15 +1011,30 @@ onBeforeUnmount(() => {
               :is-employee-workspace-mode="isBusinessEmployeeWorkspaceMode"
             />
 
+            <BusinessContractSigningStage
+              v-else-if="activeSection === 'contract-signing'"
+              :business-job-applications="businessJobApplications"
+              :business-name="businessProfileName"
+              :workspace-owner-id="businessWorkspaceOwnerId"
+              :workspace-owner-email="businessWorkspaceOwnerEmailForSync"
+              :is-employee-workspace-mode="isBusinessEmployeeWorkspaceMode"
+            />
+
             <BusinessAssessmentStage
-              v-else-if="activeSection === 'assessment-management' || activeSection === 'applicant-score'"
+              v-else-if="activeSection === 'assessment-management' || activeSection === 'assessment-assignment' || activeSection === 'applicant-score'"
               :active-section="activeSection"
               :business-job-applications="businessJobApplications"
+              :workspace-owner-id="businessWorkspaceOwnerId"
+              :business-name="businessProfileName"
+              :is-employee-workspace-mode="isBusinessEmployeeWorkspaceMode"
             />
 
             <BusinessInterviewStage
-              v-else-if="activeSection === 'interview-scheduling'"
+              v-else-if="activeSection === 'interview-scheduling' || activeSection === 'interview-status'"
+              :active-section="activeSection"
               :business-job-applications="businessJobApplications"
+              :workspace-owner-id="businessWorkspaceOwnerId"
+              :business-name="businessProfileName"
             />
 
             <BusinessTrainingStage
@@ -823,6 +1048,133 @@ onBeforeUnmount(() => {
               :workspace-user-directory="workspaceUserDirectory"
               :employee-directory="employeeDirectory"
             />
+
+            <section v-else-if="activeSection === 'profile'" class="business-profile">
+              <div class="business-profile__header">
+                <div>
+                  <h2>Business Profile</h2>
+                  <p>Manage the details shown for your business account and workspace identity.</p>
+                </div>
+                <div class="business-profile__badge">
+                  <i class="bi bi-buildings" aria-hidden="true" />
+                  <span>{{ isBusinessEmployeeWorkspaceMode ? 'Workspace Account' : 'Business Account' }}</span>
+                </div>
+              </div>
+
+              <div
+                v-if="profileStatusMessage"
+                class="business-shell__panel"
+                :class="profileStatusTone === 'error' ? 'business-shell__panel--error' : 'business-shell__panel--success'"
+              >
+                <strong>{{ profileStatusTone === 'error' ? 'Profile Update Failed' : 'Profile Ready' }}</strong>
+                <p>{{ profileStatusMessage }}</p>
+              </div>
+
+              <div class="business-profile__grid">
+                <article class="business-profile__card">
+                  <h3>Company Information</h3>
+                  <div class="business-profile__avatar-section">
+                    <div class="business-profile__avatar-shell" :class="{ 'is-loading': isProfileAvatarLoading }">
+                      <img
+                        v-if="profileForm.avatar"
+                        :src="profileForm.avatar"
+                        alt="Business profile avatar"
+                        class="business-profile__avatar-image"
+                        :class="{ 'is-visible': profileForm.avatar }"
+                      />
+                      <div v-if="isProfileAvatarLoading" class="business-profile__avatar-loader" aria-hidden="true" />
+                      <span v-else-if="!profileForm.avatar">{{ businessProfileInitials }}</span>
+                    </div>
+                    <div class="business-profile__avatar-copy">
+                      <strong>Profile Photo</strong>
+                      <span>Upload your business image or logo to update the account avatar.</span>
+                    </div>
+                    <div class="business-profile__avatar-actions">
+                      <input
+                        ref="profileAvatarInputRef"
+                        type="file"
+                        accept="image/png,image/jpeg,image/jpg,image/webp"
+                        class="business-profile__avatar-input"
+                        @change="handleProfileAvatarChange"
+                      />
+                      <button type="button" class="business-profile__secondary" :disabled="isProfileAvatarLoading" @click="openProfileAvatarPicker">
+                        {{ isProfileAvatarLoading ? 'Loading image...' : profileForm.avatar ? 'Change Photo' : 'Upload Photo' }}
+                      </button>
+                      <button
+                        v-if="profileForm.avatar"
+                        type="button"
+                        class="business-profile__secondary business-profile__secondary--danger"
+                        :disabled="isProfileAvatarLoading"
+                        @click="removeProfileAvatar"
+                      >
+                        Remove Photo
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="business-profile__form">
+                    <label class="business-profile__field">
+                      <span>Company Name</span>
+                      <input v-model="profileForm.companyName" type="text" placeholder="Enter company name" />
+                    </label>
+                    <label class="business-profile__field">
+                      <span>Business Email</span>
+                      <input v-model="profileForm.email" type="email" placeholder="Enter business email" />
+                    </label>
+                    <label class="business-profile__field">
+                      <span>Category</span>
+                      <input v-model="profileForm.category" type="text" placeholder="Enter business category" />
+                    </label>
+                    <label class="business-profile__field">
+                      <span>Location</span>
+                      <input v-model="profileForm.location" type="text" placeholder="Enter business location" />
+                    </label>
+                    <label class="business-profile__field business-profile__field--full">
+                      <span>Contact Person</span>
+                      <input v-model="profileForm.contactPerson" type="text" placeholder="Enter contact person name" />
+                    </label>
+                  </div>
+
+                  <div class="business-profile__actions">
+                    <button type="button" class="business-profile__secondary" @click="syncProfileFormFromStoredUser">Reset</button>
+                    <button type="button" class="business-profile__primary" @click="saveBusinessProfile">Save Changes</button>
+                  </div>
+                </article>
+
+                <aside class="business-profile__card business-profile__card--preview">
+                  <h3>Profile Preview</h3>
+                  <div class="business-profile__preview">
+                    <div class="business-profile__preview-avatar" :class="{ 'is-loading': isProfileAvatarLoading }">
+                      <img
+                        v-if="profileForm.avatar"
+                        :src="profileForm.avatar"
+                        alt="Business profile preview avatar"
+                        class="business-profile__preview-avatar-image"
+                        :class="{ 'is-visible': profileForm.avatar }"
+                      />
+                      <template v-else>{{ businessProfileInitials }}</template>
+                    </div>
+                    <strong>{{ businessProfileName }}</strong>
+                    <span>{{ businessProfileEmail || 'No business email set' }}</span>
+                  </div>
+
+                  <div class="business-profile__meta">
+                    <div class="business-profile__meta-row">
+                      <span>Category</span>
+                      <strong>{{ businessProfileCategory }}</strong>
+                    </div>
+                    <div class="business-profile__meta-row">
+                      <span>Location</span>
+                      <strong>{{ businessProfileLocation }}</strong>
+                    </div>
+                    <div class="business-profile__meta-row">
+                      <span>Contact Person</span>
+                      <strong>{{ businessProfileContactPerson }}</strong>
+                    </div>
+                  </div>
+                </aside>
+              </div>
+            </section>
 
             <BusinessSubscriptionStage
               v-else-if="activeSection === 'subscriptions'"
@@ -923,14 +1275,28 @@ onBeforeUnmount(() => {
   min-width: 0;
   display: grid;
   grid-template-rows: auto 1fr;
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
   padding: 1.35rem 1.35rem 1.5rem;
   gap: 1rem;
+}
+
+.business-shell__navbar {
+  position: sticky;
+  top: 0;
+  z-index: 160;
 }
 
 .business-shell__content {
   display: grid;
   align-content: start;
   gap: 1rem;
+  overflow-y: auto;
+  padding-right: 0.35rem;
+  scrollbar-gutter: stable;
+  min-height: 0;
+  height: 100%;
 }
 
 .business-shell__stage {
@@ -938,6 +1304,7 @@ onBeforeUnmount(() => {
   align-content: start;
   gap: 1rem;
   min-width: 0;
+  min-height: 0;
   will-change: opacity, transform;
 }
 
@@ -996,6 +1363,16 @@ onBeforeUnmount(() => {
   content-visibility: auto;
   contain-intrinsic-size: 1px 8rem;
   --business-card-delay: 140ms;
+}
+
+.business-shell__panel--success {
+  border-color: rgba(170, 210, 186, 0.95);
+  background: rgba(242, 251, 246, 0.96);
+}
+
+.business-shell__panel--error {
+  border-color: rgba(232, 192, 192, 0.95);
+  background: rgba(253, 244, 244, 0.96);
 }
 
 .business-shell__panel strong,

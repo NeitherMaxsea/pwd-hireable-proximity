@@ -18,8 +18,60 @@ service firebase.storage {
         );
     }
 
+    function contractDoc(contractId) {
+      return firestore.get(/databases/(default)/documents/contract_signing/$(contractId));
+    }
+
+    function contractExists(contractId) {
+      return firestore.exists(/databases/(default)/documents/contract_signing/$(contractId));
+    }
+
+    function isContractParticipant(contractId) {
+      return signedIn()
+        && contractExists(contractId)
+        && (
+          contractDoc(contractId).data.workspace_owner_id == request.auth.uid
+          || contractDoc(contractId).data.applicant_id == request.auth.uid
+          || (
+            request.auth.token.email != null
+            && (
+              contractDoc(contractId).data.workspace_owner_email == request.auth.token.email
+              || contractDoc(contractId).data.applicant_email == request.auth.token.email
+            )
+          )
+        );
+    }
+
+    function isContractWorkspaceOwner(contractId) {
+      return signedIn()
+        && contractExists(contractId)
+        && contractDoc(contractId).data.workspace_owner_id == request.auth.uid;
+    }
+
+    function isContractApplicant(contractId) {
+      return signedIn()
+        && contractExists(contractId)
+        && (
+          contractDoc(contractId).data.applicant_id == request.auth.uid
+          || (
+            request.auth.token.email != null
+            && contractDoc(contractId).data.applicant_email == request.auth.token.email
+          )
+        );
+    }
+
     match /users/{userId}/{allPaths=**} {
       allow read, write: if isOwner(userId) || isAdmin();
+    }
+
+    match /contract_signing/{contractId}/business/{allPaths=**} {
+      allow read: if isAdmin() || isContractParticipant(contractId);
+      allow write: if isAdmin() || isContractWorkspaceOwner(contractId);
+    }
+
+    match /contract_signing/{contractId}/applicant/{allPaths=**} {
+      allow read: if isAdmin() || isContractParticipant(contractId);
+      allow write: if isAdmin() || isContractApplicant(contractId);
     }
 
     match /{allPaths=**} {

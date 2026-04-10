@@ -30,6 +30,28 @@ const toastPosition = computed(() => {
   const normalizedPosition = String(props.position || 'top-right').trim().toLowerCase()
   return ['top-right', 'bottom-left'].includes(normalizedPosition) ? normalizedPosition : 'top-right'
 })
+
+const toastActions = computed(() =>
+  (Array.isArray(props.toast?.actions) ? props.toast.actions : [])
+    .map((action, index) => {
+      const label = String(action?.label || action?.text || '').trim()
+      const normalizedTone = String(action?.tone || action?.variant || 'ghost').trim().toLowerCase()
+
+      return {
+        id: String(action?.id || `toast-action-${index + 1}`),
+        label,
+        tone: ['primary', 'ghost', 'danger'].includes(normalizedTone) ? normalizedTone : 'ghost',
+        onClick: typeof action?.onClick === 'function' ? action.onClick : null,
+        closeOnClick: action?.closeOnClick !== false,
+      }
+    })
+    .filter((action) => action.label),
+)
+
+const handleToastActionClick = (action = {}) => {
+  if (typeof action.onClick === 'function') action.onClick()
+  if (action.closeOnClick !== false) emit('close')
+}
 </script>
 
 <template>
@@ -44,9 +66,24 @@ const toastPosition = computed(() => {
       <div class="app-toast__icon" :class="`app-toast__icon--${toastKind}`" aria-hidden="true">
         <i :class="toastIcon" />
       </div>
-      <div class="app-toast__copy">
-        <strong>{{ toast.title || (toastKind === 'error' ? 'Error' : 'Notice') }}</strong>
-        <span>{{ toast.text }}</span>
+      <div class="app-toast__body">
+        <div class="app-toast__copy">
+          <strong>{{ toast.title || (toastKind === 'error' ? 'Error' : 'Notice') }}</strong>
+          <span>{{ toast.text }}</span>
+        </div>
+
+        <div v-if="toastActions.length" class="app-toast__actions">
+          <button
+            v-for="action in toastActions"
+            :key="action.id"
+            type="button"
+            class="app-toast__action"
+            :class="`app-toast__action--${action.tone}`"
+            @click="handleToastActionClick(action)"
+          >
+            {{ action.label }}
+          </button>
+        </div>
       </div>
       <button type="button" class="app-toast__close" aria-label="Close notification" @click="emit('close')">
         <i class="bi bi-x-lg" />
@@ -127,6 +164,12 @@ const toastPosition = computed(() => {
   gap: 0.22rem;
 }
 
+.app-toast__body {
+  display: grid;
+  gap: 0.7rem;
+  min-width: 0;
+}
+
 .app-toast__copy strong,
 .app-toast__copy span {
   display: block;
@@ -142,6 +185,43 @@ const toastPosition = computed(() => {
   color: #53675d;
   font-size: 0.82rem;
   line-height: 1.5;
+}
+
+.app-toast__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.app-toast__action {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.58rem 0.9rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.app-toast__action:hover {
+  transform: translateY(-1px);
+}
+
+.app-toast__action--ghost {
+  background: rgba(236, 242, 238, 0.92);
+  color: #274536;
+}
+
+.app-toast__action--primary {
+  background: linear-gradient(135deg, #2f7f57, #215c40);
+  color: #f7fff9;
+  box-shadow: 0 12px 24px rgba(33, 92, 64, 0.2);
+}
+
+.app-toast__action--danger {
+  background: linear-gradient(135deg, #c84d4d, #9f2f2f);
+  color: #fff7f7;
+  box-shadow: 0 12px 24px rgba(159, 47, 47, 0.2);
 }
 
 .app-toast__close {

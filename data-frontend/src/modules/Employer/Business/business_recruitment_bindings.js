@@ -101,10 +101,19 @@ export const createRecruitmentState = (ctx = {}) => {
       .split('\n')
       .map((item) => item.trim())
       .filter(Boolean)
+  const normalizeJobPostingDisabilityTypes = (value) =>
+    Array.isArray(value)
+      ? value.map((item) => String(item || '').trim()).filter(Boolean)
+      : String(value || '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean)
+  const serializeJobPostingDisabilityTypes = (value) =>
+    normalizeJobPostingDisabilityTypes(value).join(', ')
   const jobPostingQualificationsPreview = computed(() => toJobPostingLineItems(jobPostingDraft.value.qualifications))
   const jobPostingResponsibilitiesPreview = computed(() => toJobPostingLineItems(jobPostingDraft.value.responsibilities))
-  const jobPostingDisabilityTypeNeedsSpecification = computed(() =>
-    JOB_POSTING_DISABILITY_TYPES_REQUIRING_SPECIFICATION.has(String(jobPostingDraft.value.disabilityType || '').trim()),
+  const jobPostingSelectedDisabilityTypes = computed(() =>
+    normalizeJobPostingDisabilityTypes(jobPostingDraft.value.disabilityType),
   )
   const jobPostingTypeLabel = computed(() =>
     String(jobPostingDraft.value.type || '').trim() || 'Select job type',
@@ -112,9 +121,16 @@ export const createRecruitmentState = (ctx = {}) => {
   const jobPostingBarangayLabel = computed(() =>
     JOB_POSTING_BARANGAYS.find((entry) => entry.value === jobPostingDraft.value.barangay)?.label || 'Select barangay',
   )
-  const jobPostingDisabilityLabel = computed(() =>
-    JOB_POSTING_DISABILITY_TYPES.find((entry) => entry.value === jobPostingDraft.value.disabilityType)?.label || 'Select disability type',
-  )
+  const jobPostingDisabilityLabel = computed(() => {
+    const selected = jobPostingSelectedDisabilityTypes.value
+    if (!selected.length) return 'Select disability type'
+    const selectedLabels = JOB_POSTING_DISABILITY_TYPES
+      .filter((entry) => selected.includes(entry.value))
+      .map((entry) => entry.label)
+    if (!selectedLabels.length) return 'Select disability type'
+    if (selectedLabels.length === 1) return selectedLabels[0]
+    return `${selectedLabels[0]} +${selectedLabels.length - 1}`
+  })
   const jobPostingLanguageLabel = computed(() =>
     JOB_POSTING_LANGUAGE_OPTIONS.find((entry) => entry.value === jobPostingDraft.value.language)?.label || 'Select language',
   )
@@ -326,31 +342,9 @@ export const createRecruitmentState = (ctx = {}) => {
     resetJobPostingDraft()
     jobPostingTab.value = 'posted'
   }
-  const buildJobPostingDisabilityFitLabel = (disabilityType, impairmentSpecification) => {
-    const category = String(disabilityType || '').trim()
-    const specification = String(impairmentSpecification || '').trim()
-    if (category && specification) return `${category} - ${specification}`
-    return category || specification
-  }
-  const getJobPostingImpairmentSpecificationPlaceholder = (disabilityType) => {
-    switch (String(disabilityType || '').trim()) {
-      case 'Physical Impairment':
-        return 'Example: Right leg, left arm, limited hand mobility'
-      case 'Visual Impairment':
-        return 'Example: Low vision, blind in right eye, legally blind'
-      case 'Deaf or Hard of Hearing':
-        return 'Example: Deaf, hard of hearing, bilateral hearing loss'
-      case 'Hearing Impairment':
-        return 'Example: Left ear, right ear, bilateral hearing loss'
-      case 'Speech and Language Impairment':
-        return 'Example: Stuttering, articulation disorder, expressive language'
-      case 'Chronic Illness / Medical Condition':
-        return 'Example: Chronic kidney disease, heart condition'
-      case 'Multiple Disabilities':
-        return 'Example: Visual impairment and hearing impairment'
-      default:
-        return 'Enter impairment specification'
-    }
+  const buildJobPostingDisabilityFitLabel = (disabilityType) => {
+    const category = serializeJobPostingDisabilityTypes(disabilityType)
+    return category
   }
   const closeJobPostingDropdownOnOutsideClick = (event) => {
     const target = event?.target
@@ -369,12 +363,11 @@ export const createRecruitmentState = (ctx = {}) => {
   }
   const handleJobPostingFieldChange = (key, value) => {
     if (key === 'disabilityType') {
+      const normalizedDisabilityTypes = serializeJobPostingDisabilityTypes(value)
       jobPostingDraft.value = {
         ...jobPostingDraft.value,
-        disabilityType: value,
-        impairmentSpecification: JOB_POSTING_DISABILITY_TYPES_REQUIRING_SPECIFICATION.has(String(value || '').trim())
-          ? jobPostingDraft.value.impairmentSpecification
-          : '',
+        disabilityType: normalizedDisabilityTypes,
+        impairmentSpecification: '',
       }
       return
     }
@@ -598,11 +591,7 @@ export const createRecruitmentState = (ctx = {}) => {
       ['language', jobPostingDraft.value.language],
       ['qualifications', jobPostingDraft.value.qualifications],
       ['responsibilities', jobPostingDraft.value.responsibilities],
-    ].concat(
-      jobPostingDisabilityTypeNeedsSpecification.value
-        ? [['impairment specification', jobPostingDraft.value.impairmentSpecification]]
-        : [],
-    )
+    ]
 
     const missingFields = requiredFields
       .filter(([, value]) => String(value ?? '').trim() === '')
@@ -657,7 +646,7 @@ export const createRecruitmentState = (ctx = {}) => {
         salary: jobPostingSalaryPreview.value,
         salaryRange: jobPostingDraft.value.salaryRange,
         disabilityType: jobPostingDraft.value.disabilityType,
-        impairmentSpecification: jobPostingDraft.value.impairmentSpecification,
+        impairmentSpecification: '',
         preferredAgeRange: jobPostingDraft.value.preferredAgeRange,
         language: jobPostingDraft.value.language,
         languages: jobPostingDraft.value.language,
@@ -763,7 +752,6 @@ export const createRecruitmentState = (ctx = {}) => {
     jobPostingCreatedPreview,
     jobPostingQualificationsPreview,
     jobPostingResponsibilitiesPreview,
-    jobPostingDisabilityTypeNeedsSpecification,
     jobPostingTypeLabel,
     jobPostingBarangayLabel,
     jobPostingDisabilityLabel,
@@ -777,7 +765,6 @@ export const createRecruitmentState = (ctx = {}) => {
     jobPostHighlights,
     isEditingJobPost,
     isBusinessApplicationLinkedToPostedJob,
-    getJobPostingImpairmentSpecificationPlaceholder,
     toggleJobPostingDropdown,
     closeJobPostingDropdown,
     closeJobPostingDropdownOnOutsideClick,
@@ -821,8 +808,6 @@ export const createRecruitmentBindings = (ctx) => computed(() => ({
   JOB_POSTING_MAX_VACANCIES: ctx.JOB_POSTING_MAX_VACANCIES,
   JOB_POSTING_DISABILITY_TYPES: ctx.JOB_POSTING_DISABILITY_TYPES,
   jobPostingDisabilityLabel: ctx.jobPostingDisabilityLabel.value,
-  jobPostingDisabilityTypeNeedsSpecification: ctx.jobPostingDisabilityTypeNeedsSpecification.value,
-  getJobPostingImpairmentSpecificationPlaceholder: ctx.getJobPostingImpairmentSpecificationPlaceholder,
   JOB_POSTING_LANGUAGE_OPTIONS: ctx.JOB_POSTING_LANGUAGE_OPTIONS,
   jobPostingLanguageLabel: ctx.jobPostingLanguageLabel.value,
   handleJobPostingFieldChange: ctx.handleJobPostingFieldChange,

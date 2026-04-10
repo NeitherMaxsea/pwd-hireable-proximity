@@ -1,6 +1,5 @@
 <script setup>
-import { computed } from 'vue'
-import DigitalSignaturePad from '@/components/DigitalSignaturePad.vue'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
   contracts: {
@@ -100,11 +99,11 @@ const getContractPreview = (record = {}) => {
   }
 
   if (status === 'applicant_signed') {
-    return `Your signature was returned to ${companyLabel}. Waiting for the business countersign.`
+    return `Your signed contract file was returned to ${companyLabel}.`
   }
 
   if (status === 'sent') {
-    return `Review the ${roleLabel} offer, check the agreement, and sign when ready.`
+    return `Download the ${roleLabel} contract, sign it offline, then upload the signed file when ready.`
   }
 
   if (status === 'cancelled') {
@@ -121,9 +120,14 @@ const activeContract = computed(() =>
 )
 
 const canApplicantSign = computed(() => normalizeContractStatus(activeContract.value?.status) === 'sent')
-const activeSubmitState = computed(() =>
+const activeSubmitState = computed(() => Boolean(
   String(props.activeSubmittingContractId || '').trim()
   && String(activeContract.value?.id || '').trim() === String(props.activeSubmittingContractId || '').trim(),
+))
+const canSubmitSignedContract = computed(() =>
+  canApplicantSign.value
+  && Boolean(pendingSignedContractFile.value)
+  && !activeSubmitState.value,
 )
 const activeProviderState = computed(() =>
   String(props.activeProviderContractId || '').trim()
@@ -170,8 +174,8 @@ const contractProgressTitle = computed(() => {
   const status = normalizeContractStatus(activeContract.value?.status)
   if (status === 'completed') return 'Contract completed'
   if (status === 'cancelled') return 'Contract closed'
-  if (status === 'applicant_signed') return 'Waiting for business countersign'
-  if (status === 'sent') return 'Ready for your signature'
+  if (status === 'applicant_signed') return 'Signed file returned'
+  if (status === 'sent') return 'Ready for your signed upload'
   return 'Contract in progress'
 })
 
@@ -187,15 +191,73 @@ const contractProgressMessage = computed(() => {
   }
 
   if (status === 'applicant_signed') {
-    return 'Your signature was already submitted. The business can now countersign the agreement.'
+    return 'Your signed contract file was already sent back. The business owner can now review it in real time.'
   }
 
   if (status === 'sent') {
-    return 'Review the agreement carefully, confirm your consent, and sign the contract when you are ready.'
+    return 'Download the contract file, add your signature, then upload the signed copy back to the business owner.'
   }
 
   return 'This contract is still being prepared by the business workspace.'
 })
+
+const pendingSignedContractFile = ref(null)
+const signedContractError = ref('')
+const signedContractInputKey = ref(0)
+
+const formatFileSize = (value) => {
+  const size = Number(value)
+  if (!Number.isFinite(size) || size <= 0) return ''
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`
+}
+
+const resetSignedContractDraft = () => {
+  pendingSignedContractFile.value = null
+  signedContractError.value = ''
+  signedContractInputKey.value += 1
+}
+
+const openFileLink = (url = '') => {
+  const normalizedUrl = String(url || '').trim()
+  if (!normalizedUrl || typeof window === 'undefined') return
+  window.open(normalizedUrl, '_blank', 'noopener,noreferrer')
+}
+
+const downloadFile = (url = '', fileName = '') => {
+  const normalizedUrl = String(url || '').trim()
+  if (!normalizedUrl || typeof document === 'undefined') return
+
+  const link = document.createElement('a')
+  link.href = normalizedUrl
+  link.target = '_blank'
+  link.rel = 'noopener noreferrer'
+  if (String(fileName || '').trim()) {
+    link.download = String(fileName).trim()
+  }
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+}
+
+const handleSignedContractSelection = (event) => {
+  pendingSignedContractFile.value = event?.target?.files?.[0] || null
+  signedContractError.value = ''
+}
+
+const submitSignature = () => {
+  if (!activeContract.value) return
+  if (!pendingSignedContractFile.value) {
+    signedContractError.value = 'Upload muna ng signed contract file bago ito i-send pabalik sa business owner.'
+    return
+  }
+
+  emit('sign-contract', {
+    contractId: activeContract.value.id,
+    file: pendingSignedContractFile.value,
+  })
+}
 
 const emptyStateHighlights = [
   {
@@ -212,9 +274,9 @@ const emptyStateHighlights = [
   },
   {
     id: 'sign',
-    icon: 'bi bi-pencil-square',
-    label: 'Sign digitally',
-    copy: 'Draw your signature electronically, confirm consent, and send the contract back to the business.',
+    icon: 'bi bi-file-earmark-arrow-up',
+    label: 'Return signed file',
+    copy: 'Download the contract, add your signature offline, then upload the signed file back to the business.',
   },
 ]
 
@@ -222,14 +284,9 @@ const selectContract = (contractId) => {
   emit('select-contract', contractId)
 }
 
-const submitSignature = (payload = {}) => {
-  if (!activeContract.value) return
-
-  emit('sign-contract', {
-    contractId: activeContract.value.id,
-    signatureDataUrl: payload.signatureDataUrl,
-  })
-}
+watch(() => activeContract.value?.id, () => {
+  resetSignedContractDraft()
+})
 </script>
 
 <template>
@@ -239,7 +296,7 @@ const submitSignature = (payload = {}) => {
         <p class="applicant-contracts-page__eyebrow">Contract Signing</p>
         <h1>My Contracts</h1>
         <p class="applicant-contracts-page__intro">
-          Review each agreement, confirm the offer details, and complete your digital signature when the contract is ready.
+          Review each agreement, download the contract file, sign it offline, then upload the signed copy back to the business owner.
         </p>
       </div>
 
@@ -362,12 +419,12 @@ const submitSignature = (payload = {}) => {
               <strong>{{ activeContract.employmentType || 'Not set' }}</strong>
             </article>
             <article>
-              <span>Applicant Signed</span>
+              <span>Signed File Returned</span>
               <strong>{{ activeContract.applicantSignedAtLabel || 'Pending' }}</strong>
             </article>
             <article>
-              <span>Business Signed</span>
-              <strong>{{ activeContract.businessSignedAtLabel || 'Pending' }}</strong>
+              <span>Business Review</span>
+              <strong>{{ getContractStatusLabel(activeContract) }}</strong>
             </article>
             <article class="wide">
               <span>Current Step</span>
@@ -382,6 +439,20 @@ const submitSignature = (payload = {}) => {
             </div>
           </div>
 
+          <div class="applicant-contracts-page__box">
+            <strong>Contract File</strong>
+            <span>{{ activeContract.businessContractFileName || 'No contract file uploaded yet.' }}</span>
+            <span v-if="activeContract.businessContractFileSizeLabel">Size: {{ activeContract.businessContractFileSizeLabel }}</span>
+            <span v-if="activeContract.businessContractUploadedAtLabel">Uploaded: {{ activeContract.businessContractUploadedAtLabel }}</span>
+          </div>
+
+          <div v-if="activeContract.applicantSignedContractFileName" class="applicant-contracts-page__box is-info">
+            <strong>Your Returned Signed File</strong>
+            <span>{{ activeContract.applicantSignedContractFileName }}</span>
+            <span v-if="activeContract.applicantSignedContractFileSizeLabel">Size: {{ activeContract.applicantSignedContractFileSizeLabel }}</span>
+            <span v-if="activeContract.applicantSignedContractUploadedAtLabel">Returned: {{ activeContract.applicantSignedContractUploadedAtLabel }}</span>
+          </div>
+
           <div v-if="activeContract.notes" class="applicant-contracts-page__box">
             <strong>Business Notes</strong>
             <span>{{ activeContract.notes }}</span>
@@ -391,47 +462,68 @@ const submitSignature = (payload = {}) => {
             <strong>{{ contractProgressTitle }}</strong>
             <span>{{ contractProgressMessage }}</span>
             <span>Business sent: {{ activeContract.sentAtLabel || 'Not set' }}</span>
-            <span>Applicant signed: {{ activeContract.applicantSignedAtLabel || 'Pending' }}</span>
-            <span>Business countersigned: {{ activeContract.businessSignedAtLabel || 'Pending' }}</span>
+            <span>Signed file returned: {{ activeContract.applicantSignedAtLabel || 'Pending' }}</span>
+            <span>Business review status: {{ getContractStatusLabel(activeContract) }}</span>
+          </div>
+
+          <div class="applicant-contracts-page__actions">
+            <button
+              v-if="activeContract.businessContractDownloadUrl"
+              type="button"
+              @click="openFileLink(activeContract.businessContractDownloadUrl)"
+            >
+              View Contract
+            </button>
+
+            <button
+              v-if="activeContract.businessContractDownloadUrl"
+              type="button"
+              @click="downloadFile(activeContract.businessContractDownloadUrl, activeContract.businessContractFileName)"
+            >
+              Download Contract
+            </button>
+
+            <button
+              v-if="activeContract.applicantSignedContractDownloadUrl"
+              type="button"
+              @click="openFileLink(activeContract.applicantSignedContractDownloadUrl)"
+            >
+              View My Signed File
+            </button>
           </div>
 
           <div v-if="canApplicantSign" class="applicant-contracts-page__signature-wrap">
-            <DigitalSignaturePad
-              :signer-name="applicantSignatureName"
-              :consent-checked="applicantConsentChecked"
-              :is-submitting="activeSubmitState"
-              title="Applicant Signature"
-              description="After you sign, the contract is returned to the business so they can countersign it."
-              signer-name-label="Applicant Full Name"
-              submit-label="Sign and Send Back"
-              @update:signer-name="emit('update:applicant-signature-name', $event)"
-              @update:consent-checked="emit('update:applicant-consent-checked', $event)"
-              @submit="submitSignature"
-            />
-          </div>
+            <div class="applicant-contracts-page__upload-card">
+              <strong>Upload Signed Contract</strong>
+              <span>Pagkatapos mong i-download at lagyan ng pirma, i-upload mo rito ang signed copy para makita agad ng business owner.</span>
 
-          <div
-            v-if="canApplicantSign || activeContract.providerEnvelopeId"
-            class="applicant-contracts-page__actions"
-          >
-            <button
-              v-if="canApplicantSign"
-              type="button"
-              class="primary"
-              :disabled="activeProviderState"
-              @click="emit('open-provider-sign', activeContract.id)"
-            >
-              {{ activeProviderState ? 'Opening Digital API...' : 'Open Digital API Sign' }}
-            </button>
+              <input
+                :key="signedContractInputKey"
+                type="file"
+                accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+                @change="handleSignedContractSelection"
+              >
 
-            <button
-              v-if="activeContract.providerEnvelopeId"
-              type="button"
-              :disabled="activeProviderState"
-              @click="emit('refresh-provider-status', activeContract.id)"
-            >
-              Refresh API Status
-            </button>
+              <div v-if="pendingSignedContractFile" class="applicant-contracts-page__upload-preview">
+                <strong>{{ pendingSignedContractFile.name }}</strong>
+                <span>{{ formatFileSize(pendingSignedContractFile.size) || 'Selected file' }}</span>
+              </div>
+
+              <p v-if="signedContractError" class="applicant-contracts-page__upload-error">
+                {{ signedContractError }}
+              </p>
+
+              <div class="applicant-contracts-page__actions">
+                <button
+                  type="button"
+                  class="primary"
+                  :disabled="!canSubmitSignedContract"
+                  @click="submitSignature"
+                >
+                  {{ activeSubmitState ? 'Sending Signed File...' : 'Send Signed File Back' }}
+                </button>
+              </div>
+            </div>
           </div>
         </article>
 
@@ -920,17 +1012,54 @@ const submitSignature = (payload = {}) => {
   padding-top: 0.1rem;
 }
 
-.applicant-contracts-page__signature-wrap :deep(.digital-signature-pad) {
+.applicant-contracts-page__upload-card {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem 1rem 1.05rem;
   border: 1px solid rgba(83, 128, 98, 0.16);
   border-radius: 1.05rem;
   background: rgba(248, 252, 249, 0.96);
-  box-shadow: none;
 }
 
-.applicant-contracts-page__signature-wrap :deep(.digital-signature-pad__submit) {
-  border: 1px solid #2f6a49;
-  background: #2f6a49;
-  color: #ffffff;
+.applicant-contracts-page__upload-card strong {
+  color: #20312a;
+  font-size: 0.96rem;
+}
+
+.applicant-contracts-page__upload-card span {
+  color: #63756d;
+  font-size: 0.84rem;
+  line-height: 1.65;
+}
+
+.applicant-contracts-page__upload-card input[type="file"] {
+  width: 100%;
+  padding: 0.78rem 0.88rem;
+  border: 1px dashed rgba(83, 128, 98, 0.28);
+  border-radius: 0.95rem;
+  background: #ffffff;
+  color: #355745;
+  font: inherit;
+}
+
+.applicant-contracts-page__upload-preview {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.82rem 0.9rem;
+  border-radius: 0.9rem;
+  background: rgba(228, 244, 234, 0.96);
+  border: 1px solid rgba(83, 128, 98, 0.16);
+}
+
+.applicant-contracts-page__upload-preview strong {
+  color: #1f3f30;
+}
+
+.applicant-contracts-page__upload-error {
+  margin: 0;
+  color: #b42318;
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .applicant-contracts-page__actions button {

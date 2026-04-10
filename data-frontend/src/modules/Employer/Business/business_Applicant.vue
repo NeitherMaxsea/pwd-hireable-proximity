@@ -172,6 +172,7 @@ const handleApplicantRowKeydown = (event, applicant) => {
                               class="business-applicants__row-action"
                               title="View"
                               aria-label="View"
+                              :disabled="applicant.isStatusUpdating"
                               @click.stop="openApplicantManagementDecision(applicant.id, 'view')"
                             >
                               <i class="bi bi-eye" aria-hidden="true" />
@@ -182,9 +183,10 @@ const handleApplicantRowKeydown = (event, applicant) => {
                               class="business-applicants__row-action business-applicants__row-action--approve"
                               title="Approve"
                               aria-label="Approve"
+                              :disabled="applicant.isStatusUpdating"
                               @click.stop="requestApproveApplicantManagementApplication(applicant.id)"
                             >
-                              <i class="bi bi-check-lg" aria-hidden="true" />
+                              <i :class="applicant.isStatusUpdating ? 'bi bi-arrow-repeat' : 'bi bi-check-lg'" aria-hidden="true" />
                             </button>
                             <button
                               v-if="!applicant.isFinalStatus"
@@ -192,6 +194,7 @@ const handleApplicantRowKeydown = (event, applicant) => {
                               class="business-applicants__row-action business-applicants__row-action--reject"
                               title="Reject"
                               aria-label="Reject"
+                              :disabled="applicant.isStatusUpdating"
                               @click.stop="openApplicantManagementDecision(applicant.id, 'reject')"
                             >
                               <i class="bi bi-x-lg" aria-hidden="true" />

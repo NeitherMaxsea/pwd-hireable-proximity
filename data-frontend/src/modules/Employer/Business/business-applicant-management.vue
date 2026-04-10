@@ -1,7 +1,8 @@
 <script setup>
-import { computed, reactive } from 'vue'
+import { computed, reactive, watch } from 'vue'
 import BusinessApplicantContent from '@/modules/Employer/Business/business_Applicant.vue'
 import { createApplicantState } from '@/modules/Employer/Business/business_applicant_bindings'
+import { updateApplicantJobApplicationStatus } from '@/lib/apply_jobs'
 import '@/components/businesss.css'
 
 const props = defineProps({
@@ -51,6 +52,7 @@ const fallbackApplicants = [
 ]
 
 const statusOverrides = reactive({})
+const pendingStatusUpdates = reactive({})
 const applicantManagementFilters = reactive({
   search: '',
   roleFilter: 'all',
@@ -67,11 +69,22 @@ const applicantState = createApplicantState({
   businessJobApplications: computed(() =>
     baseApplications.value.map((item) => ({
       ...item,
-      status: text(statusOverrides[item.id] || item.status || 'pending'),
+      status: text(statusOverrides[text(item?.id || item?.applicationId)] || item.status || 'pending'),
     })),
   ),
   normalizeUserOverviewValue: normalizeValue,
 })
+
+watch(baseApplications, (records = []) => {
+  ;(Array.isArray(records) ? records : []).forEach((item) => {
+    const applicationId = text(item?.id || item?.applicationId)
+    if (!applicationId || !statusOverrides[applicationId]) return
+
+    if (normalizeValue(item?.status) === normalizeValue(statusOverrides[applicationId])) {
+      delete statusOverrides[applicationId]
+    }
+  })
+}, { deep: true, immediate: true })
 
 const applicantManagementRoleOptions = computed(() => {
   const seen = new Set()
@@ -144,6 +157,7 @@ const filteredApplicantManagementRows = computed(() => {
         avatarClass: `is-${normalizedStatus.replace(/\s+/g, '-') || 'pending'}`,
         isFinalStatus,
         finalAction: resolveFinalAction(status),
+        isStatusUpdating: pendingStatusUpdates[text(item?.id || item?.applicationId || `${email}-${index}`)] === true,
       }
     })
     .filter((item) => {
@@ -160,12 +174,41 @@ const applicantManagementSummary = computed(() => {
   return `${count} applicant${count === 1 ? '' : 's'} shown`
 })
 
+const syncApplicantManagementStatus = async (applicationId = '', status = 'pending', extraPayload = {}) => {
+  const normalizedId = text(applicationId)
+  if (!normalizedId || pendingStatusUpdates[normalizedId]) return false
+
+  const previousOverride = statusOverrides[normalizedId]
+  statusOverrides[normalizedId] = status
+  pendingStatusUpdates[normalizedId] = true
+
+  try {
+    await updateApplicantJobApplicationStatus(normalizedId, {
+      status,
+      ...extraPayload,
+    })
+    return true
+  } catch (error) {
+    if (previousOverride) statusOverrides[normalizedId] = previousOverride
+    else delete statusOverrides[normalizedId]
+
+    if (typeof window !== 'undefined') {
+      window.alert(error instanceof Error ? error.message : 'Unable to update this applicant status right now.')
+    }
+    return false
+  } finally {
+    delete pendingStatusUpdates[normalizedId]
+  }
+}
+
 const openApplicantManagementDecision = (applicationId = '', action = 'view') => {
   const applicant = filteredApplicantManagementRows.value.find((item) => item.id === text(applicationId))
   if (!applicant) return
 
   if (action === 'reject') {
-    statusOverrides[applicant.id] = 'rejected'
+    syncApplicantManagementStatus(applicant.id, 'rejected', {
+      rejectionReason: 'This application was not approved during applicant management review.',
+    })
     return
   }
 
@@ -176,20 +219,23 @@ const openApplicantManagementDecision = (applicationId = '', action = 'view') =>
   }
 }
 
-const requestApproveApplicantManagementApplication = (applicationId = '') => {
+const requestApproveApplicantManagementApplication = async (applicationId = '') => {
   const normalizedId = text(applicationId)
   if (!normalizedId) return
-  statusOverrides[normalizedId] = 'approved'
+  await syncApplicantManagementStatus(normalizedId, 'approved')
 }
 
-const reviewApplicantManagementQueue = () => {
-  baseApplications.value.forEach((item) => {
-    const itemId = text(item?.id)
-    const currentStatus = normalizeValue(statusOverrides[itemId] || item?.status)
-    if (itemId && currentStatus === 'pending') {
-      statusOverrides[itemId] = 'under review'
-    }
-  })
+const reviewApplicantManagementQueue = async () => {
+  const pendingApplicantIds = baseApplications.value
+    .map((item) => {
+      const itemId = text(item?.id || item?.applicationId)
+      const currentStatus = normalizeValue(statusOverrides[itemId] || item?.status)
+      return itemId && currentStatus === 'pending' ? itemId : ''
+    })
+    .filter(Boolean)
+
+  await Promise.all(pendingApplicantIds.map((applicationId) =>
+    syncApplicantManagementStatus(applicationId, 'under review')))
 }
 
 const {

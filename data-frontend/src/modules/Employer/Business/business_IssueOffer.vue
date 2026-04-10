@@ -56,9 +56,29 @@ const summaryCards = computed(() => {
   ]
 })
 
+const resolveDateValue = (value) => {
+  if (!value) return null
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value
+  if (typeof value?.toDate === 'function') {
+    const resolved = value.toDate()
+    return resolved instanceof Date && !Number.isNaN(resolved.getTime()) ? resolved : null
+  }
+  if (typeof value === 'object') {
+    const seconds = Number(value.seconds ?? value._seconds)
+    const nanoseconds = Number(value.nanoseconds ?? value._nanoseconds ?? 0)
+    if (Number.isFinite(seconds)) {
+      const resolved = new Date((seconds * 1000) + Math.floor(nanoseconds / 1000000))
+      return Number.isNaN(resolved.getTime()) ? null : resolved
+    }
+  }
+
+  const resolved = new Date(String(value).trim())
+  return Number.isNaN(resolved.getTime()) ? null : resolved
+}
+
 const formatDateLabel = (value, options = {}) => {
-  const parsedValue = new Date(String(value || '').trim())
-  if (Number.isNaN(parsedValue.getTime())) return 'Not set'
+  const parsedValue = resolveDateValue(value)
+  if (!parsedValue) return 'Not set'
 
   return parsedValue.toLocaleString('en-US', {
     month: 'short',
@@ -317,11 +337,30 @@ const handleIssueOfferRowKeydown = (event, rowId) => {
   padding: 0.9rem 1rem;
   text-align: left;
   white-space: normal;
+  border: 1px solid rgba(214, 226, 220, 0.94);
+  background: linear-gradient(180deg, rgba(248, 252, 249, 0.98) 0%, rgba(255, 255, 255, 0.98) 100%);
 }
 
 .business-issue-offer__table :deep(.business-user-overview__meta strong),
 .business-issue-offer__table :deep(.business-applicants__role-copy strong) {
   color: #183126;
+}
+
+.business-issue-offer__table :deep(.business-applicants__table-row) {
+  transition: background-color 0.18s ease, transform 0.18s ease;
+}
+
+.business-issue-offer__table :deep(.business-applicants__table-row.is-clickable:hover) {
+  background: linear-gradient(180deg, rgba(244, 250, 246, 0.98) 0%, rgba(255, 255, 255, 0.98) 100%);
+}
+
+.business-issue-offer__table :deep(.business-applicants__table-row.is-clickable:focus-visible) {
+  outline: 2px solid rgba(121, 178, 147, 0.42);
+  outline-offset: -2px;
+}
+
+.business-issue-offer__avatar {
+  box-shadow: 0 12px 22px rgba(29, 106, 69, 0.12);
 }
 
 .business-issue-offer__status-pill.is-offer-ready {

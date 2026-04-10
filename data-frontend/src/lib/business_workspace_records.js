@@ -116,6 +116,7 @@ export const normalizeBusinessAssessmentTemplateRecord = (record = {}) => {
   const updatedAt = timestampText(record.updatedAt || record.updated_at || record.updated_at_server)
   const title = text(record.title)
   const description = text(record.description)
+  const category = text(record.category)
   const instructions = text(record.instructions)
   const questions = Array.isArray(record.questions) ? JSON.parse(JSON.stringify(record.questions)) : []
   const passingScorePercent = normalizePercent(record.passingScorePercent || record.passing_score_percent, 70)
@@ -125,6 +126,7 @@ export const normalizeBusinessAssessmentTemplateRecord = (record = {}) => {
     workspaceOwnerId,
     title,
     description,
+    category,
     instructions,
     questions,
     passingScorePercent,
@@ -135,6 +137,7 @@ export const normalizeBusinessAssessmentTemplateRecord = (record = {}) => {
       workspace_owner_id: workspaceOwnerId,
       title,
       description,
+      category,
       instructions,
       questions,
       passing_score_percent: passingScorePercent,

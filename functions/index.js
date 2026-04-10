@@ -39,6 +39,7 @@ const DELETED_USER_HISTORY_COLLECTION = 'deleted_user_history'
 const REGISTRATION_OTP_COLLECTION = 'employer_registration'
 const JOBS_COLLECTION = 'jobs'
 const APPLY_JOBS_COLLECTION = 'apply_jobs'
+const JOB_OFFERS_COLLECTION = 'job_offers'
 const BUSINESS_INTERVIEW_SCHEDULES_COLLECTION = 'business_interview_schedules'
 const BUSINESS_APPLICANT_SCORE_COLLECTION = 'applicant_score_assessment'
 const BUSINESS_ASSESSMENT_TEMPLATE_COLLECTION = 'business_assessment_templates'
@@ -2036,6 +2037,62 @@ const withoutUndefined = (value = {}) =>
   Object.fromEntries(
     Object.entries(value).filter(([, entry]) => entry !== undefined),
   )
+const timestampText = (value) => {
+  if (!value) return ''
+  if (typeof value === 'string') return value.trim()
+  if (value instanceof Date) return value.toISOString()
+  if (typeof value?.toDate === 'function') return value.toDate().toISOString()
+  if (typeof value?.seconds === 'number') return new Date(value.seconds * 1000).toISOString()
+  if (typeof value?._seconds === 'number') return new Date(value._seconds * 1000).toISOString()
+  return text(value)
+}
+const normalizeManagedJobOfferRecord = (record = {}) => ({
+  id: text(record.id || record.offerId || record.offer_id || record.applicationId || record.application_id),
+  applicationId: text(record.applicationId || record.application_id || record.id),
+  workspaceOwnerId: text(record.workspaceOwnerId || record.workspace_owner_id),
+  workspaceOwnerName: text(record.workspaceOwnerName || record.workspace_owner_name || record.companyName || record.company_name),
+  workspaceOwnerEmail: normalizeEmail(record.workspaceOwnerEmail || record.workspace_owner_email),
+  applicantId: text(record.applicantId || record.applicant_id),
+  applicantName: text(record.applicantName || record.applicant_name),
+  applicantEmail: normalizeEmail(record.applicantEmail || record.applicant_email),
+  applicantAvatar: text(record.applicantAvatar || record.applicant_avatar || record.avatar || record.avatar_url),
+  jobId: text(record.jobId || record.job_id),
+  jobTitle: text(record.jobTitle || record.job_title),
+  interviewType: text(record.interviewType || record.interview_type || 'initial') || 'initial',
+  offerTitle: text(record.offerTitle || record.offer_title),
+  offerLetter: text(record.offerLetter || record.offer_letter),
+  compensation: text(record.compensation || record.salary || record.salary_range),
+  startDate: text(record.startDate || record.start_date),
+  responseDeadline: text(record.responseDeadline || record.response_deadline),
+  offerStatus: text(record.offerStatus || record.offer_status || 'sent').toLowerCase() || 'sent',
+  applicantResponseNote: text(record.applicantResponseNote || record.applicant_response_note),
+  applicantRespondedAt: timestampText(record.applicantRespondedAt || record.applicant_responded_at),
+  sentAt: timestampText(record.sentAt || record.sent_at),
+  createdAt: timestampText(record.createdAt || record.created_at || record.created_at_server),
+  updatedAt: timestampText(record.updatedAt || record.updated_at || record.updated_at_server),
+})
+const normalizeApplicantJobOfferResponse = (value) => {
+  const normalized = text(value).toLowerCase()
+  if (['accept', 'accepted', 'confirm', 'confirmed', 'approve', 'approved'].includes(normalized)) return 'accepted'
+  if (['reject', 'rejected', 'decline', 'declined', 'deny', 'denied'].includes(normalized)) return 'rejected'
+  return ''
+}
+const buildManagedJobOfferApplicationMirrorPayload = (record = {}) =>
+  withoutUndefined({
+    job_offer_id: text(record.id || record.offerId || record.offer_id || record.applicationId || record.application_id),
+    job_offer_status: text(record.offerStatus || record.offer_status),
+    job_offer_title: text(record.offerTitle || record.offer_title),
+    job_offer_letter: text(record.offerLetter || record.offer_letter),
+    job_offer_compensation: text(record.compensation || record.salary || record.salary_range),
+    job_offer_start_date: text(record.startDate || record.start_date),
+    job_offer_response_deadline: text(record.responseDeadline || record.response_deadline),
+    job_offer_interview_type: text(record.interviewType || record.interview_type || 'initial') || 'initial',
+    job_offer_sent_at: timestampText(record.sentAt || record.sent_at),
+    job_offer_created_at: timestampText(record.createdAt || record.created_at),
+    job_offer_updated_at: timestampText(record.updatedAt || record.updated_at),
+    job_offer_applicant_responded_at: timestampText(record.applicantRespondedAt || record.applicant_responded_at),
+    job_offer_applicant_response_note: text(record.applicantResponseNote || record.applicant_response_note),
+  })
 
 const commitFirestoreOperations = async (operations = []) => {
   const normalizedOperations = operations.filter((operation) => operation?.type && operation?.ref)
@@ -2063,6 +2120,337 @@ const commitFirestoreOperations = async (operations = []) => {
   }
 
   return normalizedOperations.length
+}
+
+const saveBusinessJobOfferHandler = async (rawData, request) => {
+  const context = await resolveBusinessWorkspaceRequestContext(request, rawData)
+  assertCanEditBusinessWorkspaceModule(
+    context,
+    'applicant-management',
+    'Your account is not allowed to issue job offers.',
+  )
+
+  const applicationId = text(rawData?.applicationId || rawData?.application_id || rawData?.id)
+  if (!applicationId) {
+    throw new HttpsError('invalid-argument', 'A valid application ID is required before sending a job offer.')
+  }
+
+  const applicationRef = db.collection(APPLY_JOBS_COLLECTION).doc(applicationId)
+  const applicationSnapshot = await applicationRef.get()
+
+  if (!applicationSnapshot.exists) {
+    throw new HttpsError('not-found', 'That applicant application could not be found.')
+  }
+
+  const applicationRecord = applicationSnapshot.data() || {}
+  const applicationWorkspaceOwnerId = text(applicationRecord?.workspace_owner_id || applicationRecord?.workspaceOwnerId)
+
+  if (!applicationWorkspaceOwnerId || applicationWorkspaceOwnerId !== context.workspaceOwnerId) {
+    throw new HttpsError('permission-denied', 'Your account is not allowed to issue job offers for this applicant.')
+  }
+
+  const ownerSummary = resolveBusinessWorkspaceOwnerSummary(
+    context.workspaceOwnerProfile,
+    context.workspaceOwnerId,
+  )
+  const offerDocumentId = text(
+    rawData?.id
+    || rawData?.offerId
+    || rawData?.offer_id
+    || applicationRecord?.job_offer_id
+    || applicationId,
+  ) || applicationId
+  const offerRef = db.collection(JOB_OFFERS_COLLECTION).doc(offerDocumentId)
+  const offerSnapshot = await offerRef.get()
+  const existingOfferRecord = offerSnapshot.exists ? offerSnapshot.data() || {} : {}
+
+  const normalizedOffer = normalizeManagedJobOfferRecord({
+    ...applicationRecord,
+    ...existingOfferRecord,
+    ...rawData,
+    id: offerDocumentId,
+    applicationId,
+    workspaceOwnerId: context.workspaceOwnerId,
+    workspaceOwnerName:
+      ownerSummary.workspaceOwnerName
+      || text(rawData?.workspaceOwnerName || rawData?.workspace_owner_name || applicationRecord?.workspace_owner_name),
+    workspaceOwnerEmail:
+      ownerSummary.workspaceOwnerEmail
+      || normalizeEmail(rawData?.workspaceOwnerEmail || rawData?.workspace_owner_email || applicationRecord?.workspace_owner_email),
+    applicantId: text(applicationRecord?.applicant_id || applicationRecord?.applicantId || rawData?.applicantId || rawData?.applicant_id),
+    applicantName: text(rawData?.applicantName || rawData?.applicant_name || applicationRecord?.applicant_name),
+    applicantEmail: normalizeEmail(rawData?.applicantEmail || rawData?.applicant_email || applicationRecord?.applicant_email),
+    applicantAvatar: text(rawData?.applicantAvatar || rawData?.applicant_avatar || applicationRecord?.applicant_avatar),
+    jobId: text(applicationRecord?.job_id || applicationRecord?.jobId || rawData?.jobId || rawData?.job_id),
+    jobTitle: text(rawData?.jobTitle || rawData?.job_title || applicationRecord?.job_title),
+    interviewType: text(
+      rawData?.interviewType
+      || rawData?.interview_type
+      || existingOfferRecord?.interview_type
+      || applicationRecord?.job_offer_interview_type
+      || applicationRecord?.interview_type
+      || 'initial',
+    ) || 'initial',
+  })
+
+  if (!normalizedOffer.applicationId || !normalizedOffer.applicantId || !normalizedOffer.jobId) {
+    throw new HttpsError(
+      'failed-precondition',
+      'The selected applicant record is missing the application, applicant, or job details needed for a job offer.',
+    )
+  }
+
+  if (
+    normalizedOffer.offerStatus === 'sent'
+    && (!normalizedOffer.offerTitle || !normalizedOffer.compensation || !normalizedOffer.offerLetter)
+  ) {
+    throw new HttpsError(
+      'invalid-argument',
+      'Complete the offer title, compensation, and offer letter before sending this job offer.',
+    )
+  }
+
+  const createdAt =
+    normalizedOffer.createdAt
+    || timestampText(existingOfferRecord?.created_at || existingOfferRecord?.created_at_server)
+    || nowIso()
+  const sentAt =
+    normalizedOffer.sentAt
+    || timestampText(existingOfferRecord?.sent_at)
+    || (normalizedOffer.offerStatus === 'sent' ? nowIso() : '')
+  const updatedAt = nowIso()
+
+  const savedOffer = {
+    ...normalizedOffer,
+    id: offerDocumentId,
+    applicationId,
+    workspaceOwnerId: context.workspaceOwnerId,
+    workspaceOwnerName: normalizedOffer.workspaceOwnerName || ownerSummary.workspaceOwnerName,
+    workspaceOwnerEmail: normalizedOffer.workspaceOwnerEmail || ownerSummary.workspaceOwnerEmail,
+    sentAt,
+    createdAt,
+    updatedAt,
+  }
+
+  const batch = db.batch()
+  batch.set(offerRef, withoutUndefined({
+    application_id: savedOffer.applicationId,
+    workspace_owner_id: savedOffer.workspaceOwnerId,
+    workspace_owner_name: savedOffer.workspaceOwnerName,
+    workspace_owner_email: savedOffer.workspaceOwnerEmail,
+    applicant_id: savedOffer.applicantId,
+    applicant_name: savedOffer.applicantName,
+    applicant_email: savedOffer.applicantEmail,
+    applicant_avatar: savedOffer.applicantAvatar,
+    job_id: savedOffer.jobId,
+    job_title: savedOffer.jobTitle,
+    interview_type: savedOffer.interviewType,
+    offer_title: savedOffer.offerTitle,
+    offer_letter: savedOffer.offerLetter,
+    compensation: savedOffer.compensation,
+    start_date: savedOffer.startDate,
+    response_deadline: savedOffer.responseDeadline,
+    offer_status: savedOffer.offerStatus,
+    applicant_response_note: savedOffer.applicantResponseNote,
+    applicant_responded_at: savedOffer.applicantRespondedAt,
+    sent_at: savedOffer.sentAt,
+    created_at: savedOffer.createdAt,
+    updated_at: savedOffer.updatedAt,
+    updated_at_server: serverTimestampField(),
+  }), { merge: true })
+  batch.set(applicationRef, withoutUndefined({
+    ...buildManagedJobOfferApplicationMirrorPayload(savedOffer),
+    updated_at: updatedAt,
+    updated_at_server: serverTimestampField(),
+    status_updated_at: updatedAt,
+    status_updated_at_server: serverTimestampField(),
+  }), { merge: true })
+
+  await batch.commit()
+
+  return {
+    saved: true,
+    offer: savedOffer,
+  }
+}
+
+const respondToApplicantJobOfferHandler = async (rawData, request) => {
+  const requesterUid = text(request?.auth?.uid)
+  const requesterEmail = normalizeEmail(request?.auth?.token?.email)
+
+  if (!requesterUid && !requesterEmail) {
+    throw new HttpsError('unauthenticated', 'Sign in as the applicant before responding to this job offer.')
+  }
+
+  const requestedApplicationId = text(rawData?.applicationId || rawData?.application_id || rawData?.id)
+  if (!requestedApplicationId) {
+    throw new HttpsError('invalid-argument', 'A valid application ID is required before responding to a job offer.')
+  }
+
+  const applicantResponse = normalizeApplicantJobOfferResponse(
+    rawData?.response || rawData?.offerStatus || rawData?.offer_status,
+  )
+  if (!applicantResponse) {
+    throw new HttpsError('invalid-argument', 'Choose whether to accept or reject this job offer first.')
+  }
+
+  const applicationRef = db.collection(APPLY_JOBS_COLLECTION).doc(requestedApplicationId)
+  const applicationSnapshot = await applicationRef.get()
+  if (!applicationSnapshot.exists) {
+    throw new HttpsError('not-found', 'That applicant application could not be found.')
+  }
+
+  const applicationRecord = applicationSnapshot.data() || {}
+  const applicationApplicantId = text(applicationRecord?.applicant_id || applicationRecord?.applicantId)
+  const applicationApplicantEmail = normalizeEmail(applicationRecord?.applicant_email || applicationRecord?.applicantEmail)
+
+  if (
+    (applicationApplicantId && requesterUid && applicationApplicantId !== requesterUid)
+    || (!applicationApplicantId && applicationApplicantEmail && requesterEmail && applicationApplicantEmail !== requesterEmail)
+  ) {
+    throw new HttpsError('permission-denied', 'Your account is not allowed to respond to this job offer.')
+  }
+
+  if (
+    !applicationApplicantId
+    && !applicationApplicantEmail
+    && requesterUid
+    && requesterEmail
+  ) {
+    throw new HttpsError(
+      'failed-precondition',
+      'This application is missing the applicant identity needed to confirm the job offer response.',
+    )
+  }
+
+  const offerDocumentId = text(
+    rawData?.offerId
+    || rawData?.offer_id
+    || rawData?.jobOfferId
+    || rawData?.job_offer_id
+    || applicationRecord?.job_offer_id
+    || requestedApplicationId,
+  ) || requestedApplicationId
+  const offerRef = db.collection(JOB_OFFERS_COLLECTION).doc(offerDocumentId)
+  const offerSnapshot = await offerRef.get()
+  const offerRecord = offerSnapshot.exists ? offerSnapshot.data() || {} : {}
+
+  const currentOfferStatus = text(offerRecord?.offer_status || applicationRecord?.job_offer_status).toLowerCase()
+  if (!currentOfferStatus) {
+    throw new HttpsError('failed-precondition', 'No job offer is available for this application yet.')
+  }
+
+  if (currentOfferStatus === applicantResponse) {
+    const existingOffer = normalizeManagedJobOfferRecord({
+      ...applicationRecord,
+      ...offerRecord,
+      id: offerDocumentId,
+      applicationId: requestedApplicationId,
+    })
+
+    return {
+      saved: true,
+      alreadyResponded: true,
+      response: applicantResponse,
+      offer: existingOffer,
+      application: {
+        id: requestedApplicationId,
+        application_status: text(applicationRecord?.application_status || applicationRecord?.status),
+        job_offer_status: currentOfferStatus,
+      },
+    }
+  }
+
+  if (currentOfferStatus !== 'sent') {
+    throw new HttpsError('failed-precondition', 'This job offer already has a final response and can no longer be changed.')
+  }
+
+  const updatedAt = nowIso()
+  const applicantResponseNote = text(rawData?.applicantResponseNote || rawData?.applicant_response_note)
+    || (applicantResponse === 'accepted' ? 'Offer accepted by applicant.' : 'Offer declined by applicant.')
+  const nextApplicationStatus = applicantResponse === 'accepted' ? 'accepted' : 'declined'
+  const createdAt =
+    timestampText(offerRecord?.created_at || offerRecord?.created_at_server)
+    || text(applicationRecord?.job_offer_created_at)
+    || nowIso()
+  const sentAt =
+    timestampText(offerRecord?.sent_at)
+    || text(applicationRecord?.job_offer_sent_at)
+    || nowIso()
+  const savedOffer = {
+    ...normalizeManagedJobOfferRecord({
+      ...applicationRecord,
+      ...offerRecord,
+      id: offerDocumentId,
+      applicationId: requestedApplicationId,
+      offerStatus: applicantResponse,
+      applicantResponseNote,
+      applicantRespondedAt: updatedAt,
+      createdAt,
+      sentAt,
+      updatedAt,
+    }),
+    id: offerDocumentId,
+    applicationId: requestedApplicationId,
+    offerStatus: applicantResponse,
+    applicantResponseNote,
+    applicantRespondedAt: updatedAt,
+    createdAt,
+    sentAt,
+    updatedAt,
+  }
+
+  const batch = db.batch()
+  batch.set(offerRef, withoutUndefined({
+    application_id: savedOffer.applicationId,
+    workspace_owner_id: savedOffer.workspaceOwnerId,
+    workspace_owner_name: savedOffer.workspaceOwnerName,
+    workspace_owner_email: savedOffer.workspaceOwnerEmail,
+    applicant_id: savedOffer.applicantId,
+    applicant_name: savedOffer.applicantName,
+    applicant_email: savedOffer.applicantEmail,
+    applicant_avatar: savedOffer.applicantAvatar,
+    job_id: savedOffer.jobId,
+    job_title: savedOffer.jobTitle,
+    interview_type: savedOffer.interviewType,
+    offer_title: savedOffer.offerTitle,
+    offer_letter: savedOffer.offerLetter,
+    compensation: savedOffer.compensation,
+    start_date: savedOffer.startDate,
+    response_deadline: savedOffer.responseDeadline,
+    offer_status: savedOffer.offerStatus,
+    applicant_response_note: savedOffer.applicantResponseNote,
+    applicant_responded_at: savedOffer.applicantRespondedAt,
+    sent_at: savedOffer.sentAt,
+    created_at: savedOffer.createdAt,
+    updated_at: savedOffer.updatedAt,
+    updated_at_server: serverTimestampField(),
+  }), { merge: true })
+  batch.set(applicationRef, withoutUndefined({
+    ...buildManagedJobOfferApplicationMirrorPayload(savedOffer),
+    application_status: nextApplicationStatus,
+    rejection_reason: applicantResponse === 'rejected' ? applicantResponseNote : '',
+    updated_at: updatedAt,
+    updated_at_server: serverTimestampField(),
+    status_updated_at: updatedAt,
+    status_updated_at_server: serverTimestampField(),
+    rejected_at: applicantResponse === 'rejected' ? updatedAt : '',
+    rejected_at_server: applicantResponse === 'rejected' ? serverTimestampField() : deleteFieldValue(),
+  }), { merge: true })
+
+  await batch.commit()
+
+  return {
+    saved: true,
+    response: applicantResponse,
+    offer: savedOffer,
+    application: {
+      id: requestedApplicationId,
+      application_status: nextApplicationStatus,
+      job_offer_status: applicantResponse,
+      rejection_reason: applicantResponse === 'rejected' ? applicantResponseNote : '',
+    },
+  }
 }
 
 const BUSINESS_PERMISSION_MODULE_SECTIONS = [
@@ -3016,6 +3404,12 @@ exports.updateBusinessJobPost = onCall(async (request) =>
 
 exports.deleteBusinessJobPost = onCall(async (request) =>
   deleteBusinessJobPostHandler(request.data, request))
+
+exports.saveBusinessJobOffer = onCall(async (request) =>
+  saveBusinessJobOfferHandler(request.data, request))
+
+exports.respondToApplicantJobOffer = onCall(async (request) =>
+  respondToApplicantJobOfferHandler(request.data, request))
 
 exports.createBusinessWorkspaceUser = onCall(async (request) =>
   createBusinessWorkspaceUserHandler(request.data, request))
